@@ -1,0 +1,15 @@
+.build/
+build/
+.swiftpm/
+.DS_Store
+.env
+.env.*
+*.xcuserstate
+xcuserdata/
+
+__pycache__/
+*.pyc
+
+# Personal build settings
+scripts/local.env
+dist/
