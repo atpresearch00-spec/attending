@@ -16,6 +16,9 @@ import CoreLocation
     private var tomorrowFajr: Date?
     var onPrayerTime: ((Prayer, Date) -> Void)?
     var onEndingSoon: ((Prayer, Date) -> Void)?
+    /// Friday reminders: Jummah ahead of the khutbah, and Surah Al-Kahf in the morning.
+    var onJummah: ((Date) -> Void)?
+    var onKahf: (() -> Void)?
 
     private let manager = CLLocationManager()
     private var coordinate: CLLocationCoordinate2D?
@@ -33,6 +36,32 @@ import CoreLocation
         get { PrayerTimes.Asr(rawValue: UserDefaults.standard.integer(forKey: "salahAsr")) ?? .standard }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "salahAsr"); objectWillChange.send(); recalculate() }
     }
+
+    var jummahReminder: Bool {
+        get { UserDefaults.standard.object(forKey: "jummahReminder") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "jummahReminder"); objectWillChange.send(); schedule() }
+    }
+    /// Khutbah time on Fridays, as minutes after midnight (1:30 PM unless set).
+    var jummahMinutes: Int {
+        get { UserDefaults.standard.object(forKey: "jummahMinutes") as? Int ?? 13 * 60 + 30 }
+        set { UserDefaults.standard.set(newValue, forKey: "jummahMinutes"); objectWillChange.send(); schedule() }
+    }
+    var jummahLead: Int {
+        get { UserDefaults.standard.object(forKey: "jummahLead") as? Int ?? 30 }
+        set { UserDefaults.standard.set(newValue, forKey: "jummahLead"); objectWillChange.send(); schedule() }
+    }
+    var kahfReminder: Bool {
+        get { UserDefaults.standard.bool(forKey: "kahfReminder") }
+        set { UserDefaults.standard.set(newValue, forKey: "kahfReminder"); objectWillChange.send(); schedule() }
+    }
+    /// Today's khutbah time, on Fridays.
+    var jummahToday: Date? {
+        guard Calendar.current.component(.weekday, from: now) == 6 else { return nil }
+        return Calendar.current.startOfDay(for: now).addingTimeInterval(TimeInterval(jummahMinutes * 60))
+    }
+    /// Direction of the Kaaba, in degrees from north.
+    var qibla: Double? { coordinate.map { PrayerTimes.qiblaBearing(latitude: $0.latitude, longitude: $0.longitude) } }
+
 
     override init() {
         super.init()
@@ -119,6 +148,7 @@ import CoreLocation
     /// reports it and recalculates. Midnight rolls the day over the same way.
     private func schedule() {
         timerTask?.cancel()
+        guard running else { return }
         let now = Date()
         var events: [(Date, () -> Void)] = []
         if let next { let (prayer, time) = next; events.append((time, { [weak self] in self?.onPrayerTime?(prayer, time) })) }
@@ -128,6 +158,13 @@ import CoreLocation
                 guard let self, !prayed.contains(current) else { return }
                 onEndingSoon?(current, end)
             })) }
+        }
+        if jummahReminder, let jummah = jummahToday {
+            let remind = jummah.addingTimeInterval(TimeInterval(-jummahLead * 60))
+            if remind > now { events.append((remind, { [weak self] in self?.onJummah?(jummah) })) }
+        }
+        if kahfReminder, jummahToday != nil, let morning = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: now), morning > now {
+            events.append((morning, { [weak self] in self?.onKahf?() }))
         }
         if let midnight = Calendar.current.nextDate(after: now, matching: DateComponents(hour: 0, minute: 0, second: 5), matchingPolicy: .nextTime) {
             events.append((midnight, {}))

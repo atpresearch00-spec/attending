@@ -1,15 +1,16 @@
 import AppKit
+import PDFKit
 import SwiftUI
 import ServiceManagement
 import ApplicationServices
 import AttendingCore
 
-enum Tab: String, CaseIterable { case home, agents, assistant, study, shelf, clipboard, mirror, settings
+enum Tab: String, CaseIterable { case home, agents, assistant, study, shelf, clipboard, notes, prompter, mirror, settings
     var symbol: String {
-        switch self { case .home: "square.grid.2x2"; case .agents: "terminal"; case .assistant: "sparkles"; case .study: "graduationcap"; case .shelf: "tray"; case .clipboard: "doc.on.clipboard"; case .mirror: "camera"; case .settings: "gearshape" }
+        switch self { case .home: "square.grid.2x2"; case .agents: "terminal"; case .assistant: "sparkles"; case .study: "graduationcap"; case .shelf: "tray"; case .clipboard: "doc.on.clipboard"; case .notes: "note.text"; case .prompter: "text.aligncenter"; case .mirror: "camera"; case .settings: "gearshape" }
     }
     var title: String {
-        switch self { case .home: "Home"; case .agents: "Agents"; case .assistant: "Ask AI"; case .study: "Study"; case .shelf: "Shelf"; case .clipboard: "Clipboard"; case .mirror: "Mirror"; case .settings: "Settings" }
+        switch self { case .home: "Home"; case .agents: "Agents"; case .assistant: "Ask AI"; case .study: "Study"; case .shelf: "Shelf"; case .clipboard: "Clipboard"; case .notes: "Notes"; case .prompter: "Prompter"; case .mirror: "Mirror"; case .settings: "Settings" }
     }
 }
 
@@ -59,6 +60,8 @@ struct NotchAlert: Identifiable, Equatable {
     private var hudTask: Task<Void, Never>?
     private var alertOpenedPanel = false
     private var alertTask: Task<Void, Never>?
+    /// The latest alert that arrived while the island was out of the way.
+    private var heldAlert: (alert: NotchAlert, sound: String?, at: Date)?
     let media = MediaController()
     let volume = SystemVolume()
     let calendar = CalendarService()
@@ -73,9 +76,21 @@ struct NotchAlert: Identifiable, Equatable {
     let mediaKeys = MediaKeyTap()
     let anki = AnkiService()
     let exams = ExamStore()
+    let autoQuit = AutoQuit()
+    let keepAwake = KeepAwake()
+    let activity = ActivityLog()
+    let snapper = WindowSnapper()
+    let cleanScreen = CleanScreen()
+    let stepAside = StepAside()
+    let onboarding = Onboarding()
+    let prompter = Prompter()
+    let screenTime = ScreenTime()
+    /// The event-title override from a capture flag, kept while Clean screen changes titles.
+    private var savedTitleOverride: String??
     let sheets = SheetTracker()
     let salah = SalahTracker()
     let updater = Updater()
+    let downloads = DownloadStats()
     let drives = VolumeMonitor()
     let outlook = OutlookService()
     let launcher = LauncherStore()
@@ -103,7 +118,36 @@ struct NotchAlert: Identifiable, Equatable {
     @AppStorage("clipboardEnabled") var clipboardEnabled = true
     @AppStorage("hudEnabled") var hudEnabled = true
     @AppStorage("autoClose") var autoClose = true
-    @AppStorage("showExams") var showExams = false
+    @AppStorage("boardsEnabled") var showExams = true
+    /// Tabs in the header after Home, in order (Settings is always last). Agents is off by
+    /// default: its alerts and question cards reach you anyway.
+    @AppStorage("headerTabs") private var headerTabsRaw = "assistant,study,shelf,mirror"
+    static let choosableTabs: [Tab] = [.agents, .assistant, .study, .shelf, .notes, .clipboard, .prompter, .mirror]
+    var headerTabs: [Tab] {
+        get { headerTabsRaw.split(separator: ",").compactMap { Tab(rawValue: String($0)) }.filter { Self.choosableTabs.contains($0) } }
+        set { headerTabsRaw = newValue.map(\.rawValue).joined(separator: ",") }
+    }
+    /// Where agent questions and approvals open: the Agents tab if it's shown, else Home.
+    var agentsHome: Tab { headerTabs.contains(.agents) ? .agents : .home }
+    /// Exam week: Home shows only what matters for the exam, and your Focus shortcut runs.
+    @AppStorage("examWeek") var examWeek = false {
+        didSet { if examWeek != oldValue { ShortcutRunner.run(examWeek ? focusStartShortcut : focusEndShortcut) } }
+    }
+    /// Minutes between water-and-stretch nudges while you're at the Mac; 0 is off.
+    @AppStorage("breakEvery") var breakEvery = 0 { didSet { scheduleBreaks() } }
+    private var breakTask: Task<Void, Never>?
+    @AppStorage("islandAnchor") private var islandAnchorRaw = IslandAnchor.notch.rawValue
+    var islandAnchor: IslandAnchor {
+        get { IslandAnchor(rawValue: islandAnchorRaw) ?? .notch }
+        set { islandAnchorRaw = newValue.rawValue; onModeChange?() }
+    }
+    /// Put the island on the menu-bar screen (an external display) instead of the notch's.
+    @AppStorage("islandOnMainScreen") var islandOnMainScreen = false { didSet { onModeChange?() } }
+    /// Minutes before each calendar event (a lecture, say) to drop down a reminder; 0 is off.
+    @AppStorage("eventLead") var eventLead = 10 { didSet { scheduleEventReminder() } }
+    private var eventReminderTask: Task<Void, Never>?
+    private var remindedEvents = Set<String>()
+    @Published var confetti = false
     @AppStorage("screenshotDrops") var screenshotDrops = true
     @AppStorage("liveActivities") var liveActivities = true
     @AppStorage("previewGlance") var previewGlance = true
@@ -123,6 +167,7 @@ struct NotchAlert: Identifiable, Equatable {
     @Published var codexApprovals: [CodexTransportApproval] = []
     @Published var codexTurns: [String: CodexTurn] = [:]
     @Published var selectedSessionID: String?
+    @Published var agentsShowRecent = false
     @Published var draft = ""
     @Published var codexBusy = false
     @Published var responseText: [String: String] = [:]
@@ -131,6 +176,8 @@ struct NotchAlert: Identifiable, Equatable {
     private let approvalBroker = ApprovalBroker()
     private var adapterTasks: [Task<Void, Never>] = []
     private var codexThreads: [String: CodexOwnedThread] = [:]
+    private var codexSessions: CodexSessionWatcher?
+    private var titleChecks: [String: Date] = [:]
     var selectedSession: AgentSession? { state.sessions.first { $0.id == selectedSessionID } }
     var canSendToSelected: Bool {
         guard let session = selectedSession else { return false }
@@ -138,7 +185,17 @@ struct NotchAlert: Identifiable, Equatable {
     }
     var onProjectPicker: ((Bool) -> Void)?
     var onModeChange: (() -> Void)?
-    var active: [AgentSession] { state.sessions.filter { [.working, .attention, .idle].contains($0.status) } }
+    /// Running sessions, plus ones opened in the last 15 minutes that are waiting for a prompt.
+    var active: [AgentSession] {
+        let recent = Date().addingTimeInterval(-15 * 60)
+        return state.sessions.filter { $0.status == .working || $0.status == .attention || ($0.status == .idle && $0.lastActiveAt > recent) }
+    }
+    /// Everything else from the last week, without test and scratch folders.
+    var recent: [AgentSession] {
+        let shown = Set(active.map(\.id)), week = Date().addingTimeInterval(-7 * 86400)
+        return Array(state.sessions.filter { !shown.contains($0.id) && $0.lastActiveAt > week && !SessionNaming.isScratch($0.projectPath) }
+            .sorted { $0.lastActiveAt > $1.lastActiveAt }.prefix(20))
+    }
     var attention: [AgentSession] { state.sessions.filter { $0.status == .attention } }
     var attentionCount: Int {
         var ids = Set(attention.map(\.id))
@@ -150,7 +207,7 @@ struct NotchAlert: Identifiable, Equatable {
         if !attention.isEmpty || !claudeApprovals.isEmpty || !codexApprovals.isEmpty { return .attention }
         if state.sessions.contains(where: { $0.status == .working }) { return .working }
         if celebrating { return .completed }
-        if state.sessions.contains(where: { $0.status == .failed }) { return .failed }
+        if state.sessions.contains(where: { $0.status == .failed && $0.lastActiveAt > Date().addingTimeInterval(-600) }) { return .failed }
         return .idle
     }
     func start() async {
@@ -165,11 +222,16 @@ struct NotchAlert: Identifiable, Equatable {
         if weatherEnabled { weather.start() }
         if salahEnabled { salah.start() }
         mirror.onPhoto = { [weak self] url in self?.shelf.add([url]) }
+        mirror.onRunning = { [weak self] running in self?.meeting.ownCameraActive = running }
         updater.onAvailable = { [weak self] release in
             self?.raise(NotchAlert(title: "Attending \(release.version) is available", subtitle: "You have \(self?.updater.current ?? "")", symbol: "arrow.down.circle.fill", color: Theme.working, target: .settings,
                                    actionTitle: "Update", action: { [weak self] in self?.updater.install(); self?.alert = nil }))
         }
         updater.start()
+        downloads.onMilestone = { [weak self] count in
+            self?.raise(NotchAlert(title: "Attending hit \(count.formatted()) downloads", subtitle: "People are installing what you built.", symbol: "arrow.down.circle.fill", color: Theme.done, target: .settings), sound: "Hero")
+        }
+        downloads.start()
         airDropSender.onSent = { [weak self] urls in
             let what = urls.count == 1 ? urls[0].lastPathComponent : "\(urls.count) files"
             self?.raise(NotchAlert(title: "Sent with AirDrop", subtitle: what, symbol: "checkmark.circle.fill", color: Theme.done, target: .shelf), sound: "Glass")
@@ -187,9 +249,81 @@ struct NotchAlert: Identifiable, Equatable {
             raise(NotchAlert(title: "\(prayer.title) ends in 15 minutes", subtitle: "Until \(end.formatted(date: .omitted, time: .shortened))", symbol: "hourglass", color: Theme.attention, target: .home,
                              actionTitle: "Prayed", action: { [weak self] in self?.salah.toggle(prayer); self?.alert = nil }), sound: "Tink")
         }
+        salah.onJummah = { [weak self] khutbah in
+            guard let self, salahAlerts else { return }
+            raise(NotchAlert(title: "Jummah at \(khutbah.formatted(date: .omitted, time: .shortened))", subtitle: "Jummah Mubarak. Time to head to the masjid.", symbol: "building.columns.fill", color: Theme.done, target: .home), sound: "Glass")
+        }
+        salah.onKahf = { [weak self] in
+            guard let self, salahAlerts else { return }
+            raise(NotchAlert(title: "Jummah Mubarak", subtitle: "A reminder to read Surah Al-Kahf today", symbol: "book.closed.fill", color: Theme.done, target: .home), sound: "Glass")
+        }
+        exams.onMilestone = { [weak self] exam, days in
+            guard let self, showExams, exams.visible(exam) else { return }
+            raise(NotchAlert(title: days == 1 ? "\(exam.shortName) is tomorrow" : "\(days) days to \(exam.shortName)", subtitle: days <= 7 ? "You've put in the work. Keep it steady." : "\(BoardsMath.studyDays(from: Date(), to: exam.date, daysOff: exam.daysOff)) study days left", symbol: "graduationcap.fill", color: exams.urgency(exam), target: .study), sound: "Glass")
+        }
+        exams.onChecklist = { [weak self] exam in
+            guard let self, showExams else { return }
+            raise(NotchAlert(title: "\(exam.shortName) tomorrow", subtitle: "Check your exam-day list: ID, permit, snacks, layers", symbol: "checklist", color: Theme.attention, target: .study, actionTitle: "Checklist", action: { [weak self] in self?.open(.study) }), sound: "Glass")
+        }
+        exams.onBedtime = { [weak self] exam, days in
+            guard let self, showExams else { return }
+            let bedtime = Calendar.current.startOfDay(for: Date()).addingTimeInterval(TimeInterval(exams.bedtimeMinutes * 60))
+            raise(NotchAlert(title: days == 1 ? "\(exam.shortName) tomorrow" : "\(exam.shortName) in 2 days", subtitle: "Wind down by \(bedtime.formatted(date: .omitted, time: .shortened)). Sleep is part of the plan.", symbol: "moon.zzz.fill", color: Theme.working, target: .study), sound: "Glass")
+        }
+        exams.onExamMorning = { [weak self] exam in
+            guard let self, showExams else { return }
+            raise(NotchAlert(title: "Good luck today", subtitle: "\(exam.name) at \(exam.date.formatted(date: .omitted, time: .shortened)). You've got this.", symbol: "heart.fill", color: Theme.done, target: .study), sound: "Glass")
+        }
+        exams.onFinished = { [weak self] exam in
+            guard let self, showExams else { return }
+            raise(NotchAlert(title: "You did it", subtitle: exam.expectedScores.map { "\(exam.shortName) is done. Scores around \($0.formatted(date: .abbreviated, time: .omitted))." } ?? "\(exam.name) is done. Go rest.", symbol: "party.popper.fill", color: Theme.done, target: .study), sound: "Hero")
+            confetti = true
+            Task { try? await Task.sleep(for: .seconds(4)); self.confetti = false }
+        }
+        exams.schedule()
+        autoQuit.start()
+        snapper.start()
+        screenTime.record = { [weak self] category, seconds in self?.activity.add(category.logKey, seconds) }
+        screenTime.focusing = { [weak self] in self.map { $0.timer.isRunning && !$0.timer.isBreak } ?? false }
+        screenTime.onDistraction = { [weak self] name in
+            guard let self else { return }
+            let minutes = max(1, Int((timer.total - timer.remaining()) / 60))
+            raise(NotchAlert(title: "You're \(minutes) min into focus", subtitle: "\(name) can wait. Back to it?", symbol: "brain.head.profile", color: Theme.attention, target: .home), sound: "Tink")
+        }
+        if screenTime.enabled || screenTime.guardFocus { screenTime.start() }
+        cleanScreen.onChange = { [weak self] on in
+            guard let self else { return }
+            if on { savedTitleOverride = calendar.titleOverride; calendar.titleOverride = "Busy" }
+            else { calendar.titleOverride = savedTitleOverride ?? nil; savedTitleOverride = nil }
+            media.hiddenForCapture = on
+            calendar.refresh()
+            objectWillChange.send()
+        }
+        timer.onFocusMinutes = { [weak self] minutes in if minutes >= 1 { self?.activity.add("focus", Int(minutes.rounded())) } }
+        sheets.onPagesToday = { [weak self] pages in self?.activity.record("pages", pages) }
+        exams.onQuestions = { [weak self] count in self?.activity.add("questions", count) }
+        activity.onRecap = { [weak self] in
+            guard let self else { return }
+            let week = self.week
+            guard !week.isEmpty else { return }
+            let parts = [week.focusMinutes > 0 ? "\(WeekCard.hours(week.focusMinutes)) focused" : nil, week.pages > 0 ? "\(week.pages) pages" : nil,
+                         week.reviews > 0 ? "\(week.reviews) reviews" : nil].compactMap { $0 }
+            raise(NotchAlert(title: "Your week", subtitle: parts.joined(separator: " · "), symbol: "chart.bar.fill", color: Theme.done, target: .study,
+                             actionTitle: "Share", action: { [weak self] in self?.shareWeek() }), sound: "Glass")
+        }
+        activity.schedule()
+        scheduleBreaks()
         if clipboardEnabled { clipboard.start() }
         usage.start()
         assistant.onClaudeLoaded = { [weak self] in self?.usage.refreshFromClaude() }
+        // An answer finished while you weren't looking at it: a check drops down.
+        assistant.onAnswered = { [weak self] provider in
+            guard let self, !(mode == .expanded && selectedTab == .assistant && assistant.provider == provider) else { return }
+            var alert = NotchAlert(title: "\(provider.title) answered", subtitle: "Your answer is ready", symbol: "checkmark.circle.fill", color: Theme.done, target: .assistant)
+            alert.actionTitle = "Show"
+            alert.action = { [weak self] in self?.assistant.provider = provider; self?.open(.assistant) }
+            raise(alert, sound: "Glass", agent: true)
+        }
         usage.onThreshold = { [weak self] percent, resets in
             let when = resets.map { " · resets \($0.formatted(date: .omitted, time: .shortened))" } ?? ""
             self?.raise(NotchAlert(title: "Claude usage at \(percent)%", subtitle: "5-hour limit\(when)", symbol: "gauge.with.dots.needle.67percent", color: percent >= 95 ? Theme.failed : Theme.attention, target: .home), sound: "Tink")
@@ -200,11 +334,7 @@ struct NotchAlert: Identifiable, Equatable {
             else if let low { showHUD(HUDState(kind: .battery, value: Double(low) / 100, symbol: "battery.25percent", tint: Theme.failed, label: "\(low)% left")) }
         }
         battery.start()
-        calendar.onImminent = { [weak self] event in
-            var alert = NotchAlert(title: "\(event.title) in 5 minutes", subtitle: event.start.formatted(date: .omitted, time: .shortened), symbol: "calendar", color: Theme.working, target: .home)
-            if let url = event.joinURL { alert.actionTitle = "Join"; alert.action = { NSWorkspace.shared.open(url) } }
-            self?.raise(alert, sound: "Tink")
-        }
+        calendar.onChange = { [weak self] in self?.scheduleEventReminder() }
         volume.onBluetoothOutput = { [weak self] name in
             Task { @MainActor in
                 guard let levels = await HeadphoneBattery.lookup(named: name) else { return }
@@ -277,7 +407,7 @@ struct NotchAlert: Identifiable, Equatable {
             guard let self else { return }
             raise(NotchAlert(title: "\(timer.label) complete", subtitle: "Time for a break", symbol: "timer", color: Theme.done, target: .home), sound: "Glass")
         }
-        do { state = try await store.load(); state.markDisconnected() }
+        do { state = try await store.load(); state.markDisconnected(); renameFolderTitles() }
         catch { storageHealthy = false; self.error = "Saved state could not be read. It has been preserved. Clear history in Settings to start fresh." }
         claudeDetected = FileManager.default.isExecutableFile(atPath: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/claude").path) || FileManager.default.isExecutableFile(atPath: "/opt/homebrew/bin/claude")
         codexDetected = FileManager.default.isExecutableFile(atPath: codex.executableURL.path)
@@ -292,6 +422,51 @@ struct NotchAlert: Identifiable, Equatable {
                 Task { @MainActor in self?.receive(events) }
             }
         } catch { self.error = "Cannot monitor agent events: \(error.localizedDescription)" }
+        let watcher = CodexSessionWatcher(since: liveEventsSince,
+            onEvents: { [weak self] events in Task { @MainActor in self?.receive(events) } },
+            onTitle: { [weak self] id, title in Task { @MainActor in self?.setTitle(title, for: ProviderID.codex.rawValue + ":" + id) } })
+        watcher.start()
+        codexSessions = watcher
+        for session in state.sessions.prefix(30) where session.provider == .claudeCode { lookUpClaudeTitle(session) }
+    }
+    /// Sessions saved before titles existed were named after their folder.
+    private func renameFolderTitles() {
+        for i in state.sessions.indices where state.sessions[i].title == URL(fileURLWithPath: state.sessions[i].projectPath).lastPathComponent {
+            state.sessions[i].title = SessionNaming.folderTitle(state.sessions[i].projectPath)
+        }
+    }
+    func setTitle(_ title: String, for id: String) {
+        guard let i = state.sessions.firstIndex(where: { $0.id == id }), state.sessions[i].title != title else { return }
+        state.sessions[i].title = title
+        persist()
+    }
+    /// Claude Code keeps a session's name in its transcript; only the title records are read.
+    private func lookUpClaudeTitle(_ session: AgentSession) {
+        if let checked = titleChecks[session.id], Date().timeIntervalSince(checked) < 30 { return }
+        titleChecks[session.id] = Date()
+        let id = session.externalID, key = session.id
+        Task.detached(priority: .utility) {
+            guard let title = Self.claudeTitle(sessionID: id) else { return }
+            await MainActor.run { self.setTitle(title, for: key) }
+        }
+    }
+    nonisolated static func claudeTitle(sessionID: String) -> String? {
+        guard !sessionID.contains("/"), !sessionID.hasPrefix(".") else { return nil }
+        let config = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].flatMap { $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : nil }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
+        let projects = config.appendingPathComponent("projects", isDirectory: true)
+        guard let folders = try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil) else { return nil }
+        for folder in folders {
+            let transcript = folder.appendingPathComponent(sessionID + ".jsonl")
+            guard let handle = try? FileHandle(forReadingFrom: transcript) else { continue }
+            defer { try? handle.close() }
+            // Claude Code rewrites the title record often, so the end of the file has the latest.
+            let size = (try? handle.seekToEnd()) ?? 0
+            try? handle.seek(toOffset: size > 512 * 1024 ? size - 512 * 1024 : 0)
+            guard let tail = try? handle.readToEnd() else { return nil }
+            return ClaudeSessionTitle.parse(String(decoding: tail, as: UTF8.self))
+        }
+        return nil
     }
     func startAdapters() async {
         do {
@@ -302,7 +477,17 @@ struct NotchAlert: Identifiable, Equatable {
                     let known = Set(claudeApprovals.map(\.id))
                     claudeApprovals = requests
                     if let fresh = requests.first(where: { !known.contains($0.id) }) {
-                        raise(NotchAlert(title: "Claude Code needs approval", subtitle: "\(fresh.toolName) · \(URL(fileURLWithPath: fresh.projectPath).lastPathComponent)", symbol: "hand.raised.fill", color: Theme.attention), sound: "Ping", agent: true)
+                        let session = state.sessions.first { $0.id == "claudeCode:" + fresh.sessionID }?.title ?? SessionNaming.folderTitle(fresh.projectPath)
+                        let (title, symbol) = switch fresh.toolName {
+                        case "AskUserQuestion": ("Claude has a question", "questionmark.bubble.fill")
+                        case "ExitPlanMode": ("Claude has a plan to approve", "list.bullet.clipboard.fill")
+                        default: ("Claude Code needs approval", "hand.raised.fill")
+                        }
+                        let subtitle = fresh.toolName == "AskUserQuestion" || fresh.toolName == "ExitPlanMode" ? session : "\(fresh.toolName) · \(session)"
+                        var alert = NotchAlert(title: title, subtitle: subtitle, symbol: symbol, color: Theme.attention)
+                        alert.actionTitle = fresh.toolName == "AskUserQuestion" ? "Answer" : "Review"
+                        alert.action = { [weak self] in guard let self else { return }; selectedSessionID = nil; open(agentsHome) }
+                        raise(alert, sound: "Ping", agent: true)
                     }
                 }
             })
@@ -381,9 +566,9 @@ struct NotchAlert: Identifiable, Equatable {
         guard let session = selectedSession, let thread = codexThreads[session.externalID], let turn = codexTurns[session.externalID] else { return }
         Task { do { try await codex.interrupt(in: thread, turn: turn) } catch { self.error = error.localizedDescription } }
     }
-    func respondClaude(_ request: ApprovalRequest, decision: ApprovalDecision) {
+    func respondClaude(_ request: ApprovalRequest, decision: ApprovalDecision, answers: [String: String]? = nil) {
         Task {
-            let accepted = await approvalBroker.respond(to: request.id, decision: decision)
+            let accepted = await approvalBroker.respond(to: request.id, decision: decision, answers: answers)
             claudeApprovals.removeAll { $0.id == request.id }
             if accepted { receive([.init(provider: request.provider, sessionID: request.sessionID, projectPath: request.projectPath, kind: .working)]) }
             if !accepted { error = "This permission request expired or disconnected. Respond in Claude Code." }
@@ -403,6 +588,9 @@ struct NotchAlert: Identifiable, Equatable {
             }
             let old = state
             state.apply(event, liveEventsSince: liveEventsSince)
+            if event.provider == .claudeCode, event.timestamp >= liveEventsSince, let session = state.sessions.first(where: { $0.id == "claudeCode:" + event.sessionID }) {
+                lookUpClaudeTitle(session)
+            }
             if state != old && event.timestamp >= liveEventsSince && event.kind == .completed && completionNotifications {
                 celebrating = true
                 completionTask?.cancel()
@@ -411,6 +599,12 @@ struct NotchAlert: Identifiable, Equatable {
             if state != old && event.timestamp >= liveEventsSince, let session = state.sessions.first(where: { $0.id == event.provider.rawValue + ":" + event.sessionID }) {
                 switch event.kind {
                 case .completed: raise(NotchAlert(title: "\(event.provider.title) finished", subtitle: session.title, symbol: "checkmark.circle.fill", color: Theme.done), sound: "Glass", agent: true)
+                case .attention where event.provider == .codex:
+                    // Codex's questions can only be answered in Codex itself, so the alert opens it.
+                    var alert = NotchAlert(title: "Codex has a question", subtitle: session.title, symbol: "questionmark.bubble.fill", color: Theme.attention)
+                    alert.actionTitle = "Open"
+                    alert.action = { [weak self] in self?.alert = nil; self?.setMode(.idle); CodexSessionWatcher.openApp() }
+                    raise(alert, sound: "Ping", agent: true)
                 case .attention: raise(NotchAlert(title: "\(event.provider.title) needs you", subtitle: session.title, symbol: "exclamationmark.circle.fill", color: Theme.attention), sound: "Ping", agent: true)
                 case .failed: raise(NotchAlert(title: "\(event.provider.title) hit an error", subtitle: session.title, symbol: "xmark.octagon.fill", color: Theme.failed), sound: "Basso", agent: true)
                 default: break
@@ -423,9 +617,11 @@ struct NotchAlert: Identifiable, Equatable {
     /// Runs the user's Focus shortcuts as agents start and stop working.
     private func updateWorkingAutomation() {
         let working = state.sessions.contains { $0.status == .working }
+        keepAwake.agentsWorking = working
         guard working != wasWorking else { return }
         wasWorking = working
-        ShortcutRunner.run(working ? focusStartShortcut : focusEndShortcut)
+        // During exam week Focus stays on, so agents finishing doesn't turn it off.
+        if working || !examWeek { ShortcutRunner.run(working ? focusStartShortcut : focusEndShortcut) }
     }
     func persist() {
         guard storageHealthy else { return }
@@ -438,6 +634,7 @@ struct NotchAlert: Identifiable, Equatable {
         }
     }
     func shutdown() async {
+        cleanScreen.set(false)
         media.stop()
         activities.stop()
         mediaKeys.stop()
@@ -445,6 +642,7 @@ struct NotchAlert: Identifiable, Equatable {
         for task in adapterTasks { task.cancel() }
         await approvalBroker.stop()
         await codex.shutdown()
+        codexSessions?.stop()
         await saveTask?.value
     }
     func clearHistory() {
@@ -513,6 +711,9 @@ struct NotchAlert: Identifiable, Equatable {
     func raise(_ next: NotchAlert, sound: String? = nil, agent: Bool = false) {
         // The Settings toggle covers agent events; timers, screenshots and drives always show.
         guard awake, agentAlerts || !agent else { return }
+        // Out of the way (full screen, an editor in front, the teleprompter): hold the
+        // latest one for when the island comes back, without a sound.
+        if islandAside { heldAlert = (next, sound, Date()); return }
         alert = next
         if alertSounds, let sound { NSSound(named: sound)?.play() }
         if mode == .idle { alertOpenedPanel = true; setMode(.preview) }
@@ -523,6 +724,14 @@ struct NotchAlert: Identifiable, Equatable {
             alert = nil
             if mode == .preview && alertOpenedPanel && !pointerInside { setMode(.idle) }
         }
+    }
+    /// True while the island steps aside and isn't open.
+    var islandAside: Bool { (stepAside.hidden || prompter.running) && mode == .idle }
+    /// Shows an alert that waited, if it's recent.
+    func releaseHeldAlert() {
+        guard let held = heldAlert else { return }
+        heldAlert = nil
+        if Date().timeIntervalSince(held.at) < 30 * 60 { raise(held.alert, sound: held.sound) }
     }
     func setMediaControls(_ enabled: Bool) {
         mediaControls = enabled
@@ -613,7 +822,7 @@ struct NotchAlert: Identifiable, Equatable {
     }
     func setCalendar(_ enabled: Bool) {
         calendarEnabled = enabled
-        if enabled { calendar.start(requestIfNeeded: true) }
+        if enabled { calendar.start(requestIfNeeded: true) } else { calendar.stop() }
     }
 
     // MARK: Layout
@@ -625,7 +834,7 @@ struct NotchAlert: Identifiable, Equatable {
         guard previewGlance else { return 0 }
         var count = 0
         if calendarEnabled && calendar.next != nil { count += 1 }
-        if sheets.primary != nil || (showExams && exams.next != nil) { count += 1 }
+        if sheets.primary != nil || (showExams && exams.pinned.map(exams.visible) == true) { count += 1 }
         if anki.stats != nil { count += 1 }
         if usage.fiveHour != nil { count += 1 }
         return count
@@ -633,6 +842,121 @@ struct NotchAlert: Identifiable, Equatable {
     var glanceReading: (tracker: SheetTracker.Tracker, item: SheetTracker.Item)? {
         guard previewGlance, let primary = sheets.primaryTracker, let item = primary.summary.pending.first else { return nil }
         return (primary.tracker, item)
+    }
+    /// Sleeps until `eventLead` minutes before the next calendar event, then drops down
+    /// "Cardio lecture in 10 min · Room 1" with Join for online meetings.
+    func scheduleEventReminder() {
+        eventReminderTask?.cancel()
+        guard calendarEnabled, eventLead > 0 else { return }
+        let lead = TimeInterval(eventLead * 60), now = Date()
+        let key = { (event: UpcomingEvent) in "\(event.title)|\(event.start.timeIntervalSince1970)" }
+        guard let event = calendar.events(from: now, to: now.addingTimeInterval(36 * 3600)).first(where: { $0.start > now && !remindedEvents.contains(key($0)) }) else { return }
+        eventReminderTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(0, event.start.timeIntervalSinceNow - lead)))
+            guard !Task.isCancelled, let self else { return }
+            remindedEvents.insert(key(event))
+            let minutes = max(1, Int((event.start.timeIntervalSinceNow / 60).rounded()))
+            var alert = NotchAlert(title: "\(event.title) in \(minutes) min", subtitle: [event.start.formatted(date: .omitted, time: .shortened), event.location].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · "),
+                                   symbol: "calendar", color: Theme.working, target: .home)
+            if let url = event.joinURL { alert.actionTitle = "Join"; alert.action = { NSWorkspace.shared.open(url) } }
+            raise(alert, sound: "Tink")
+            scheduleEventReminder()
+        }
+    }
+    /// Every `breakEvery` minutes between 8 AM and 10 PM, if you've used the Mac in the last
+    /// five minutes and aren't already on a Pomodoro break: a nudge to drink water and stretch.
+    func scheduleBreaks() {
+        breakTask?.cancel()
+        guard breakEvery > 0 else { return }
+        breakTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(max(60, (self?.breakEvery ?? 60) * 60)))
+                guard !Task.isCancelled, let self else { return }
+                let hour = Calendar.current.component(.hour, from: Date())
+                let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: CGEventType(rawValue: ~0)!)
+                guard (8..<22).contains(hour), idle < 300, !timer.isBreak else { continue }
+                raise(NotchAlert(title: "Water and a stretch", subtitle: "Stand up, drink some water, rest your eyes for a minute.", symbol: "drop.fill", color: Theme.working, target: .home), sound: "Tink")
+            }
+        }
+    }
+    /// The exam pinned to the closed notch, when that's turned on.
+    var wingExam: BoardExam? {
+        guard showExams, exams.pinToNotch, let exam = exams.pinned, exams.visible(exam) else { return nil }
+        return exam
+    }
+    /// Converts a Shelf file (to JPG, a smaller PDF or a smaller video) and shelves the result.
+    func convert(_ url: URL, to kind: FileConverter.Kind) {
+        raise(NotchAlert(title: "Converting…", subtitle: url.lastPathComponent, symbol: kind.symbol, color: Theme.working, target: .shelf))
+        Task {
+            do {
+                let output = try await FileConverter.convert(url, to: kind)
+                shelf.add([output])
+                let size = (try? output.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? ""
+                raise(NotchAlert(title: "Ready: \(output.lastPathComponent)", subtitle: "\(size) · on your Shelf, next to the original", symbol: "checkmark.circle.fill", color: Theme.done, target: .shelf, fileURL: output), sound: "Glass")
+            } catch {
+                raise(NotchAlert(title: "Couldn't convert", subtitle: error.localizedDescription, symbol: "exclamationmark.triangle.fill", color: Theme.attention, target: .shelf))
+            }
+        }
+    }
+    /// Copies the text in a Shelf image to the clipboard.
+    func copyText(from url: URL) {
+        Task {
+            do {
+                let text = try await FileConverter.recognizeText(in: url)
+                guard !text.isEmpty else { raise(NotchAlert(title: "No text found", subtitle: url.lastPathComponent, symbol: "text.viewfinder", color: Theme.attention, target: .shelf)); return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                let words = text.split(whereSeparator: \.isWhitespace).count
+                raise(NotchAlert(title: "Copied \(words) word\(words == 1 ? "" : "s")", subtitle: text.replacingOccurrences(of: "\n", with: " "), symbol: "text.viewfinder", color: Theme.done, target: .shelf), sound: "Tink")
+            } catch {
+                raise(NotchAlert(title: "Couldn't read the text", subtitle: error.localizedDescription, symbol: "exclamationmark.triangle.fill", color: Theme.attention, target: .shelf))
+            }
+        }
+    }
+    /// Makes one PDF from the photos and screenshots on the Shelf, in Shelf order.
+    func shelfImagesToPDF() {
+        let images = shelf.items.map(\.url).filter(FileConverter.isImage)
+        do {
+            let output = try FileConverter.imagesToPDF(images)
+            shelf.add([output])
+            raise(NotchAlert(title: "Made a PDF from \(images.count) image\(images.count == 1 ? "" : "s")", subtitle: "\(output.lastPathComponent) · on your Shelf", symbol: "doc.richtext.fill", color: Theme.done, target: .shelf, fileURL: output), sound: "Glass")
+        } catch {
+            raise(NotchAlert(title: "Couldn't make the PDF", subtitle: error.localizedDescription, symbol: "exclamationmark.triangle.fill", color: Theme.attention, target: .shelf))
+        }
+    }
+    /// Sends a PDF to Zotero.
+    func addToZotero(_ url: URL) {
+        raise(NotchAlert(title: "Adding to Zotero…", subtitle: url.lastPathComponent, symbol: "books.vertical.fill", color: Theme.working, target: .shelf))
+        Task {
+            do {
+                try await ZoteroImporter.add(url)
+                raise(NotchAlert(title: "Added to Zotero", subtitle: "Zotero is looking up the paper's details", symbol: "books.vertical.fill", color: Theme.done, target: .shelf), sound: "Glass")
+            } catch {
+                raise(NotchAlert(title: "Couldn't add to Zotero", subtitle: error.localizedDescription, symbol: "exclamationmark.triangle.fill", color: Theme.attention, target: .shelf))
+            }
+        }
+    }
+    /// Merges the PDFs on the Shelf, in Shelf order, and shelves the result.
+    func mergeShelfPDFs() {
+        let pdfs = shelf.items.map(\.url).filter(FileConverter.isPDF)
+        do {
+            let output = try FileConverter.merge(pdfs)
+            shelf.add([output])
+            let pages = PDFDocument(url: output)?.pageCount ?? 0
+            raise(NotchAlert(title: "Merged \(pdfs.count) PDFs", subtitle: "\(output.lastPathComponent) · \(pages) pages · on your Shelf", symbol: "doc.on.doc.fill", color: Theme.done, target: .shelf, fileURL: output), sound: "Glass")
+        } catch {
+            raise(NotchAlert(title: "Couldn't merge", subtitle: error.localizedDescription, symbol: "exclamationmark.triangle.fill", color: Theme.attention, target: .shelf))
+        }
+    }
+    /// Saves a countdown card image, puts it on the Shelf and the clipboard.
+    func shareExam(_ exam: BoardExam) {
+        let (value, label) = exams.countdown(exam)
+        guard let file = BoardsShareCard.render(exam, value: value, label: label) else { error = "Couldn't make the countdown card."; return }
+        shelf.add([file])
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([file as NSURL])
+        if let image = NSImage(contentsOf: file) { NSPasteboard.general.writeObjects([image]) }
+        raise(NotchAlert(title: "Countdown card ready", subtitle: "On your Shelf and clipboard · Pictures › Attending", symbol: "photo.fill", color: Theme.done, target: .shelf, image: NSImage(contentsOf: file), fileURL: file), sound: "Glass")
     }
     /// Width of each wing beside the notch. Both wings match so the island stays centered.
     var idleWing: CGFloat {
@@ -643,7 +967,9 @@ struct NotchAlert: Identifiable, Equatable {
         if timer.isActive { items.append(36) }
         if !active.isEmpty { items.append(12) }
         if meeting.micInUse { items.append(14) }
+        if meeting.cameraInUse { items.append(14) }
         if liveActivities && !activities.running.isEmpty { items.append(14) }
+        if let exam = wingExam { items.append(CGFloat(exams.compact(exam).count) * 6.5 + 4) }
         let content = items.reduce(0, +) + CGFloat(max(0, items.count - 1)) * 6
         return max(34, content + 20)
     }
@@ -664,7 +990,8 @@ struct NotchAlert: Identifiable, Equatable {
                 height += CGFloat(glance)
                 if timer.isActive { height += 40 }
             }
-            return CGSize(width: max(glanceTiles >= 4 ? 480 : 440, notchWidth + 250), height: band + height)
+            // Each side of the notch fits about 130 pt: the prayer chip and chevron on the right.
+            return CGSize(width: max(glanceTiles >= 4 ? 480 : 440, notchWidth + 320), height: band + height)
         case .expanded:
             // One height for every tab, sized to Home's content: switching tabs never
             // resizes the window, so nothing behind the island can flash through.

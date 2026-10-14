@@ -19,9 +19,19 @@ import SwiftUI
         var streak = 0
         /// Reviews for the last 7 days, oldest first.
         var week: [Int] = []
+        /// One card due today, the same all day: front and back as plain text.
+        var cardOfDay: (front: String, back: String)?
+        static func == (a: Stats, b: Stats) -> Bool {
+            a.dueReviews == b.dueReviews && a.learning == b.learning && a.dueTomorrow == b.dueTomorrow && a.reviewedToday == b.reviewedToday
+                && a.minutesToday == b.minutesToday && a.streak == b.streak && a.week == b.week && a.cardOfDay?.front == b.cardOfDay?.front
+        }
     }
     struct Deck: Identifiable, Equatable { var id: String { name }; var name: String; var new: Int; var learning: Int; var review: Int; var total: Int { new + learning + review } }
-    @Published private(set) var stats: Stats?
+    @Published private(set) var stats: Stats? {
+        didSet { if let demoStats, stats != demoStats { stats = demoStats } }
+    }
+    /// Sample stats for video captures, kept over refreshes (never saved).
+    var demoStats: Stats? { didSet { stats = demoStats } }
     /// Per-deck counts from AnkiConnect (as Anki's deck list shows them), when Anki is open.
     @Published private(set) var decks: [Deck] = []
     @Published private(set) var newCards: Int?
@@ -114,6 +124,28 @@ import SwiftUI
         return object["result"]
     }
 
+    /// Plain-text faces of a note: the first field is the front and the second the back; a
+    /// cloze note shows its blanks as […] on the front and filled in on the back.
+    nonisolated static func cardFaces(_ fields: String) -> (front: String, back: String)? {
+        let parts = fields.components(separatedBy: "\u{1f}").map(plain)
+        guard let first = parts.first, !first.isEmpty else { return nil }
+        if first.contains("{{c") {
+            let cloze = #"\{\{c\d+::(.*?)(::(.*?))?\}\}"#
+            let front = first.replacingOccurrences(of: cloze, with: "[…]", options: .regularExpression)
+            let back = first.replacingOccurrences(of: cloze, with: "$1", options: .regularExpression)
+            return (clip(front), clip(back))
+        }
+        return (clip(first), clip(parts.count > 1 ? parts[1] : ""))
+    }
+    nonisolated private static func plain(_ html: String) -> String {
+        var text = html.replacingOccurrences(of: "<br\\s*/?>|</div>|</p>|</li>", with: "\n", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "\\[sound:[^\\]]*\\]", with: "", options: .regularExpression)
+        for (entity, char) in ["&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": "\"", "&#39;": "'"] { text = text.replacingOccurrences(of: entity, with: char) }
+        return text.replacingOccurrences(of: "\n{2,}", with: "\n", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    nonisolated private static func clip(_ text: String) -> String { text.count > 280 ? String(text.prefix(277)) + "…" : text }
+
     nonisolated private static func read(path: String) -> Stats? {
         var db: OpaquePointer?
         // Read-only opens of a WAL database fail when Anki is closed (no -wal/-shm files to
@@ -176,38 +208,214 @@ import SwiftUI
         }
         sqlite3_finalize(statement)
         stats.week = week
+        // Card of the day: a due review card picked by today's date, so it holds all day.
+        var card: OpaquePointer?
+        if sqlite3_prepare_v2(db, "SELECT n.flds FROM cards c JOIN notes n ON n.id = c.nid WHERE c.queue IN (2, 3) AND c.due <= ?1 ORDER BY (c.id % 1000003) * ?2 % 1000003 LIMIT 1", -1, &card, nil) == SQLITE_OK {
+            sqlite3_bind_int64(card, 1, today)
+            sqlite3_bind_int64(card, 2, today * 7919 + 1)
+            if sqlite3_step(card) == SQLITE_ROW, let raw = sqlite3_column_text(card, 0) {
+                stats.cardOfDay = AnkiService.cardFaces(String(cString: raw))
+            }
+        }
+        sqlite3_finalize(card)
         var day = studied.contains(0) ? 0 : 1
         while studied.contains(day) { stats.streak += 1; day += 1 }
         return stats
     }
 }
 
-// MARK: - Exams
+// MARK: - Boards and exams
 
-struct Exam: Identifiable, Codable, Equatable {
-    var id = UUID()
-    var name: String
-    var date: Date
-    var daysLeft: Int { max(0, Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: Date()), to: Calendar.current.startOfDay(for: date)).day ?? 0) }
-}
-
+/// Board and course exams: countdowns, the question-bank pace, practice exams, the
+/// exam-day checklist and the reminders around them.
 @MainActor final class ExamStore: ObservableObject {
-    @Published private(set) var exams: [Exam] = []
-    private let key = "exams"
+    enum Calm: String, CaseIterable { case off, weeks, hideUntil30
+        var title: String { switch self { case .off: "Off"; case .weeks: "Weeks only"; case .hideUntil30: "Hide until 30 days out" } }
+    }
+    static let checklist = ["Photo ID (two forms if required)", "Scheduling permit or admission letter", "Directions, parking and arrival time", "Snacks, water and lunch", "Layers (testing rooms run cold)", "Earplugs if allowed", "Sleep by 10 PM"]
+
+    @Published private(set) var exams: [BoardExam] = []
+    @Published var unit: BoardsMath.Unit { didSet { defaults.set(unit.rawValue, forKey: "boardsUnit") } }
+    @Published var calm: Calm { didSet { defaults.set(calm.rawValue, forKey: "boardsCalm") } }
+    @Published var amberDays: Int { didSet { defaults.set(amberDays, forKey: "boardsAmber") } }
+    @Published var redDays: Int { didSet { defaults.set(redDays, forKey: "boardsRed") } }
+    @Published var milestoneAlerts: Bool { didSet { defaults.set(milestoneAlerts, forKey: "boardsMilestones") } }
+    @Published var pinToNotch: Bool { didSet { defaults.set(pinToNotch, forKey: "boardsPinNotch") } }
+    @Published var checklistReminder: Bool { didSet { defaults.set(checklistReminder, forKey: "boardsChecklist") } }
+    @Published var bedtimeNudge: Bool { didSet { defaults.set(bedtimeNudge, forKey: "boardsBedtime"); schedule() } }
+    /// Bedtime before exams, as minutes after midnight (11 PM unless set).
+    @Published var bedtimeMinutes: Int { didSet { defaults.set(bedtimeMinutes, forKey: "boardsBedtimeAt"); schedule() } }
+    var onBedtime: ((BoardExam, Int) -> Void)?
+    @Published var pinnedID: UUID? { didSet { if !demo { defaults.set(pinnedID?.uuidString, forKey: "boardsPinned") } } }
+    var onMilestone: ((BoardExam, Int) -> Void)?
+    var onExamMorning: ((BoardExam) -> Void)?
+    var onChecklist: ((BoardExam) -> Void)?
+    var onFinished: ((BoardExam) -> Void)?
+    private let defaults = UserDefaults.standard
+    private var timer: Task<Void, Never>?
+    /// Question-bank count at the start of each day, per exam, so today's target holds steady.
+    private var dayStarts: [String: [String: Int]]
+
     init() {
-        if let data = UserDefaults.standard.data(forKey: key), let saved = try? JSONDecoder().decode([Exam].self, from: data) {
+        unit = BoardsMath.Unit(rawValue: defaults.string(forKey: "boardsUnit") ?? "") ?? .days
+        calm = Calm(rawValue: defaults.string(forKey: "boardsCalm") ?? "") ?? .off
+        amberDays = defaults.object(forKey: "boardsAmber") as? Int ?? 30
+        redDays = defaults.object(forKey: "boardsRed") as? Int ?? 7
+        milestoneAlerts = defaults.object(forKey: "boardsMilestones") as? Bool ?? true
+        pinToNotch = defaults.bool(forKey: "boardsPinNotch")
+        checklistReminder = defaults.object(forKey: "boardsChecklist") as? Bool ?? true
+        pinnedID = defaults.string(forKey: "boardsPinned").flatMap(UUID.init)
+        bedtimeNudge = defaults.object(forKey: "boardsBedtime") as? Bool ?? true
+        bedtimeMinutes = defaults.object(forKey: "boardsBedtimeAt") as? Int ?? 23 * 60
+        dayStarts = (defaults.dictionary(forKey: "boardsDayStarts") as? [String: [String: Int]]) ?? [:]
+        if let data = defaults.data(forKey: "boardExams"), let saved = try? JSONDecoder().decode([BoardExam].self, from: data) {
             exams = saved.sorted { $0.date < $1.date }
+        } else if let data = defaults.data(forKey: "exams"), let old = try? JSONDecoder().decode([OldExam].self, from: data) {
+            // Exams from before boards mode: keep them, guessing the preset from the name.
+            exams = old.map { BoardExam(kind: Self.guessKind($0.name), date: Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: $0.date) ?? $0.date, customName: $0.name) }.sorted { $0.date < $1.date }
+            save()
         }
     }
-    /// The next exam that hasn't happened yet.
-    var next: Exam? { exams.first { $0.date >= Calendar.current.startOfDay(for: Date()) } }
-    func add(name: String, date: Date) {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        exams.append(Exam(name: trimmed, date: date)); exams.sort { $0.date < $1.date }; save()
+    private struct OldExam: Codable { var name: String; var date: Date }
+    private static func guessKind(_ name: String) -> BoardExam.Kind {
+        let lower = name.lowercased()
+        if lower.contains("level 1") { return .comlex1 }
+        if lower.contains("level 2") { return .comlex2 }
+        if lower.contains("level 3") { return .comlex3 }
+        if lower.contains("step 1") { return .step1 }
+        if lower.contains("step 2") { return .step2 }
+        if lower.contains("step 3") { return .step3 }
+        if lower.contains("shelf") || lower.contains("comat") || lower.contains("nbme") { return .shelf }
+        return .block
     }
-    func remove(_ exam: Exam) { exams.removeAll { $0.id == exam.id }; save() }
-    private func save() { UserDefaults.standard.set(try? JSONEncoder().encode(exams), forKey: key) }
+
+    /// Upcoming exams (including today's until it's over).
+    var upcoming: [BoardExam] { exams.filter { BoardsMath.phase(for: $0, now: Date()) != .finished } }
+    var next: BoardExam? { upcoming.first }
+    /// Exams that are over, newest first, for the score tracker.
+    var past: [BoardExam] { exams.filter { BoardsMath.phase(for: $0, now: Date()) == .finished }.sorted { $0.date > $1.date } }
+    func setResult(_ value: Double?, for exam: BoardExam) {
+        guard var updated = exams.first(where: { $0.id == exam.id }) else { return }
+        updated.result = value
+        save(updated)
+    }
+    /// Logs a past exam and its score in one go.
+    func logPast(kind: BoardExam.Kind, name: String, date: Date, result: Double) {
+        var exam = BoardExam(kind: kind, date: Calendar.current.startOfDay(for: date), customName: name)
+        exam.result = result
+        exam.logged = true
+        save(exam)
+    }
+    /// The exam shown in the notch and on Home: the pinned one, else the next.
+    var pinned: BoardExam? { upcoming.first { $0.id == pinnedID } ?? next }
+    /// Calm mode can hide a countdown until 30 days out.
+    func visible(_ exam: BoardExam) -> Bool { calm != .hideUntil30 || BoardsMath.calendarDays(from: Date(), to: exam.date) <= 30 }
+    func countdown(_ exam: BoardExam, now: Date = Date()) -> (value: String, label: String) {
+        BoardsMath.countdown(for: exam, unit: calm == .weeks ? .weeks : unit, now: now)
+    }
+    /// "42d" style label for small spaces.
+    func compact(_ exam: BoardExam) -> String {
+        let (value, label) = countdown(exam)
+        if label == "to go" || value == "Today" { return value }
+        return value + (label.hasPrefix("week") ? "w" : label.hasPrefix("study") ? " sd" : "d")
+    }
+    func urgency(_ exam: BoardExam) -> Color {
+        let days = BoardsMath.calendarDays(from: Date(), to: exam.date)
+        return days <= redDays ? Theme.failed : days <= amberDays ? Theme.attention : Theme.primary
+    }
+
+    // MARK: Editing
+
+    func save(_ exam: BoardExam) {
+        if let index = exams.firstIndex(where: { $0.id == exam.id }) { exams[index] = exam } else { exams.append(exam) }
+        exams.sort { $0.date < $1.date }
+        save(); schedule()
+    }
+    func remove(_ exam: BoardExam) { exams.removeAll { $0.id == exam.id }; if pinnedID == exam.id { pinnedID = nil }; save(); schedule() }
+    /// Logs question-bank questions (negative to undo).
+    var onQuestions: ((Int) -> Void)?
+    func logQuestions(_ count: Int, for exam: BoardExam) {
+        guard var updated = exams.first(where: { $0.id == exam.id }) else { return }
+        _ = doneAtDayStart(updated)
+        let before = updated.bankDone
+        updated.bankDone = max(0, min(updated.bankTotal ?? Int.max, updated.bankDone + count))
+        if !demo { onQuestions?(updated.bankDone - before) }
+        save(updated)
+    }
+    func toggleChecklist(_ item: String, for exam: BoardExam) {
+        guard var updated = exams.first(where: { $0.id == exam.id }) else { return }
+        if updated.checklistDone.contains(item) { updated.checklistDone.remove(item) } else { updated.checklistDone.insert(item) }
+        save(updated)
+    }
+    /// The bank count when today began, recorded the first time it's asked for each day.
+    func doneAtDayStart(_ exam: BoardExam) -> Int {
+        let day = Self.dayKey(Date()), key = exam.id.uuidString
+        if let start = dayStarts[key]?[day] { return start }
+        dayStarts[key] = [day: exam.bankDone]   // Only today's entry is kept.
+        if !demo { defaults.set(dayStarts, forKey: "boardsDayStarts") }
+        return exam.bankDone
+    }
+    func questionsToday(_ exam: BoardExam) -> (done: Int, target: Int?) {
+        let start = doneAtDayStart(exam)
+        return (max(0, exam.bankDone - start), BoardsMath.questionsPerDay(for: exam, doneAtDayStart: start, now: Date()))
+    }
+    private func save() { guard !demo else { return }; defaults.set(try? JSONEncoder().encode(exams), forKey: "boardExams") }
+    /// For screenshots and videos: sample exams that are never saved.
+    private var demo = false
+    func showDemo(_ sample: [BoardExam]) { demo = true; exams = sample; pinnedID = nil; timer?.cancel() }
+    private static func dayKey(_ date: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    // MARK: Reminders
+
+    /// Sleeps until the next reminder: a milestone morning ("30 days to go"), the checklist
+    /// the evening before, good luck on exam morning, and "you did it" after. Each fires once.
+    func schedule() {
+        timer?.cancel()
+        let now = Date(), calendar = Calendar.current
+        var fired = Set(defaults.stringArray(forKey: "boardsFired") ?? [])
+        var upcomingEvents: [(Date, String, () -> Void)] = []
+        for exam in exams where !exam.logged {
+            let id = exam.id.uuidString
+            let examDay = calendar.startOfDay(for: exam.date)
+            if milestoneAlerts {
+                for days in BoardsMath.milestones {
+                    if let day = calendar.date(byAdding: .day, value: -days, to: examDay), let at = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: day) {
+                        upcomingEvents.append((at, "\(id)-m\(days)", { [weak self] in self?.onMilestone?(exam, days) }))
+                    }
+                }
+            }
+            if bedtimeNudge {
+                // Two nights before and the night before: half an hour before bedtime.
+                for days in [2, 1] {
+                    if let night = calendar.date(byAdding: .day, value: -days, to: examDay) {
+                        let at = night.addingTimeInterval(TimeInterval(bedtimeMinutes * 60 - 30 * 60))
+                        upcomingEvents.append((at, "\(id)-bed\(days)", { [weak self] in self?.onBedtime?(exam, days) }))
+                    }
+                }
+            }
+            if checklistReminder, let eve = calendar.date(byAdding: .day, value: -1, to: examDay), let at = calendar.date(bySettingHour: 20, minute: 0, second: 0, of: eve) {
+                upcomingEvents.append((at, "\(id)-list", { [weak self] in self?.onChecklist?(exam) }))
+            }
+            let morning = max(exam.date.addingTimeInterval(-2 * 3600), calendar.date(bySettingHour: 6, minute: 0, second: 0, of: examDay) ?? exam.date)
+            upcomingEvents.append((min(morning, exam.date), "\(id)-luck", { [weak self] in self?.onExamMorning?(exam) }))
+            upcomingEvents.append((exam.date.addingTimeInterval(8 * 3600), "\(id)-done", { [weak self] in self?.onFinished?(exam) }))
+        }
+        // Reminders missed by less than three hours (the Mac was asleep) still show; older ones don't.
+        for (at, key, action) in upcomingEvents where at <= now && !fired.contains(key) {
+            fired.insert(key)
+            if now.timeIntervalSince(at) < 3 * 3600 { action() }
+        }
+        defaults.set(Array(fired), forKey: "boardsFired")
+        guard let soonest = upcomingEvents.filter({ $0.0 > now && !fired.contains($0.1) }).min(by: { $0.0 < $1.0 }) else { return }
+        timer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(1, soonest.0.timeIntervalSinceNow + 1)))
+            guard !Task.isCancelled else { return }
+            self?.schedule()
+        }
+    }
 }
 
 // MARK: - PBL trackers (Google Sheets)
@@ -281,6 +489,8 @@ struct Exam: Identifiable, Codable, Equatable {
     private let dayStartsKey = "readingDayStarts"
     /// Called once a day per tracker when the day's reading goal is reached.
     var onGoalMet: ((Summary, DailyGoal) -> Void)?
+    /// Pages read today across trackers, reported as trackers refresh.
+    var onPagesToday: ((Int) -> Void)?
     @Published private(set) var bridgeURL: String?
     private let key = "sheetTrackers"
     /// Latest request per tracker; older responses are dropped so they can't undo newer check-offs.
@@ -318,6 +528,7 @@ struct Exam: Identifiable, Codable, Equatable {
 
     /// Records each tracker's first state of the day and reports a goal reached.
     private func noteDayStarts() {
+        guard !demo else { return }
         let today = Self.dayKey()
         var changed = false
         for tracker in trackers {
@@ -332,15 +543,44 @@ struct Exam: Identifiable, Codable, Equatable {
             }
         }
         if changed, let data = try? JSONEncoder().encode(dayStarts) { UserDefaults.standard.set(data, forKey: dayStartsKey) }
+        let pages = trackers.reduce(0) { total, tracker in
+            guard case .loaded(let summary) = states[tracker.id] else { return total }
+            return total + (goal(for: tracker, summary)?.done ?? 0)
+        }
+        onPagesToday?(pages)
     }
 
-    /// The loaded tracker with the soonest upcoming exam.
+    /// The tracker picked in the Study tab (its id). The hover glance, Home and the daily
+    /// reading goal follow it too.
+    @Published var pickedID = UserDefaults.standard.string(forKey: "shownTracker") ?? "" {
+        didSet {
+            UserDefaults.standard.set(pickedID, forKey: "shownTracker")
+            UserDefaults.standard.set(Date(), forKey: "shownTrackerAt")
+        }
+    }
+    var picked: Tracker? { trackers.first { $0.id.uuidString == pickedID } }
+    /// A pick lapses once its exam has passed since you picked it; picking a past
+    /// tracker on purpose (to look back) keeps it.
+    func pickLapsed(_ summary: Summary) -> Bool {
+        guard let exam = summary.examDate else { return false }
+        let today = Calendar.current.startOfDay(for: Date())
+        let pickedAt = Calendar.current.startOfDay(for: UserDefaults.standard.object(forKey: "shownTrackerAt") as? Date ?? .distantPast)
+        return exam < today && exam >= pickedAt
+    }
+
+    /// The tracker in focus: your pick unless its exam has passed, otherwise the loaded
+    /// tracker with the soonest upcoming exam.
     var primary: Summary? { primaryTracker?.summary }
     var primaryTracker: (tracker: Tracker, summary: Summary)? {
-        trackers.compactMap { tracker -> (Tracker, Summary)? in
-            if case .loaded(let summary) = states[tracker.id], let date = summary.examDate, date >= Calendar.current.startOfDay(for: Date()) { return (tracker, summary) }
+        if let picked, case .loaded(let summary) = states[picked.id], !pickLapsed(summary) { return (picked, summary) }
+        let today = Calendar.current.startOfDay(for: Date())
+        let loaded = trackers.compactMap { tracker -> (tracker: Tracker, summary: Summary)? in
+            if case .loaded(let summary) = states[tracker.id] { return (tracker, summary) }
             return nil
-        }.min { $0.1.examDate! < $1.1.examDate! }
+        }
+        // Soonest upcoming exam; then a tracker with no exam date in its sheet yet.
+        return loaded.filter { ($0.summary.examDate ?? .distantPast) >= today }.min { $0.summary.examDate! < $1.summary.examDate! }
+            ?? loaded.first { $0.summary.examDate == nil }
     }
 
     // MARK: Bridge setup
@@ -378,7 +618,25 @@ struct Exam: Identifiable, Codable, Equatable {
     func open(_ tracker: Tracker) { if let url = URL(string: tracker.link) { NSWorkspace.shared.open(url) } }
     private func save() { UserDefaults.standard.set(try? JSONEncoder().encode(trackers), forKey: key) }
 
+    /// Sample progress for video captures: the first readings checked off, in memory only.
+    /// Refreshes and day records stop, so nothing reaches the sheet or settings.
+    private(set) var demo = false
+    func showDemo(done fraction: Double) {
+        demo = true
+        for tracker in trackers {
+            guard case .loaded(var summary) = states[tracker.id] else { continue }
+            let target = Int(Double(summary.pagesTotal) * fraction)
+            var pages = 0
+            for index in summary.items.indices {
+                summary.items[index].done = pages < target
+                if summary.items[index].done { pages += summary.items[index].pages }
+            }
+            states[tracker.id] = .loaded(summary)
+        }
+    }
+
     func refresh(_ tracker: Tracker) {
+        guard !demo else { return }
         guard connected else { states[tracker.id] = .needsBridge; return }
         if case .loaded = states[tracker.id] {} else { states[tracker.id] = .loading }
         Task { await call(tracker, extra: []) }
@@ -386,6 +644,7 @@ struct Exam: Identifiable, Codable, Equatable {
     /// Checks or unchecks a reading's Status box in the sheet; the view updates
     /// immediately and reconciles with the sheet's response.
     func toggle(_ tracker: Tracker, _ item: Item) {
+        guard !demo else { return }
         guard case .loaded(var summary) = states[tracker.id], let index = summary.items.firstIndex(where: { $0.row == item.row }) else { return }
         // Toggle from the current state, not the view's possibly stale copy.
         let before = summary

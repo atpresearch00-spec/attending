@@ -9,7 +9,7 @@ AppKit `NSPanel` that sits over the notch, plus a menu bar item. It is an access
 | Target | Role |
 |---|---|
 | `Attending` | The app: panel and animation, the views, and the services (media, calendar, study, Salah, camera, shelf and more). |
-| `AttendingCore` | Portable logic with no UI: agent session models and persistence, the approval broker, the Codex app-server transport, notch geometry, and prayer-time calculation. |
+| `AttendingCore` | Portable logic with no UI: agent session models and persistence, the approval broker, the Codex app-server transport and rollout reader, notch geometry and island positions, prayer times and Qibla, the iCal (.ics) calendar reader, and board-exam countdown math. |
 | `AttendingBridge` (`attending-bridge`) | A small command-line tool that Claude Code hooks call. It writes sanitized lifecycle events to the app's inbox, relays permission requests over a private Unix socket, and records plan usage from the status line. |
 | `AttendingMedia` | A tiny Objective-C library that streams Now Playing information. macOS only gives MediaRemote data to Apple-signed processes, so it runs inside `/usr/bin/perl` and reports JSON over a pipe. |
 | `AttendingCoreChecks` | Test runner for `AttendingCore` (Command Line Tools ship without XCTest). |

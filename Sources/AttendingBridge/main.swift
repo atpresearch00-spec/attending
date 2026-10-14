@@ -145,7 +145,7 @@ private func connect(to socketURL: URL, timeout: TimeInterval) throws -> Int32 {
     }
 }
 
-private func requestApproval(_ envelope: ApprovalEnvelope, wait: TimeInterval) -> ApprovalDecision? {
+private func requestApproval(_ envelope: ApprovalEnvelope, wait: TimeInterval) -> ApprovalResponseEnvelope? {
     do {
         let descriptor = try connect(to: AppPaths.approvalSocket, timeout: wait)
         defer { Darwin.close(descriptor) }
@@ -155,19 +155,33 @@ private func requestApproval(_ envelope: ApprovalEnvelope, wait: TimeInterval) -
               response.token == envelope.token,
               Date() < envelope.request.expiresAt
         else { return nil }
-        return response.decision
+        return response
     } catch {
         return nil
     }
 }
 
-private func writeClaudeDecision(_ decision: ApprovalDecision) {
+private func writeDecision(_ response: ApprovalResponseEnvelope, raw: [String: Any]) {
     let providerDecision: [String: Any]
-    switch decision {
+    let toolName = raw["tool_name"] as? String
+    switch response.decision {
     case .allowOnce:
-        providerDecision = ["behavior": "allow"]
+        var allow: [String: Any] = ["behavior": "allow"]
+        // Questions and plan approvals need the input echoed back; a question also carries its answers.
+        if let input = raw["tool_input"] as? [String: Any], toolName == "AskUserQuestion" || toolName == "ExitPlanMode" {
+            var updated = input
+            if toolName == "AskUserQuestion" {
+                guard let answers = response.answers, !answers.isEmpty else { return }
+                updated["answers"] = answers
+            }
+            allow["updatedInput"] = updated
+        }
+        providerDecision = allow
     case .deny:
-        providerDecision = ["behavior": "deny", "message": "Denied in Attending.", "interrupt": false]
+        let message = toolName == "ExitPlanMode" ? "The user wants to keep planning. Ask what to change." : "Denied in Attending."
+        providerDecision = ["behavior": "deny", "message": message, "interrupt": false]
+    case .askInProvider:
+        return
     }
     let output: [String: Any] = [
         "hookSpecificOutput": [
@@ -223,6 +237,6 @@ recordLifecycle(raw)
 if let wait = options.approvalWait,
    data.count <= ApprovalWire.maximumMessageBytes,
    let envelope = makeApprovalEnvelope(raw, wait: wait),
-   let decision = requestApproval(envelope, wait: wait) {
-    writeClaudeDecision(decision)
+   let response = requestApproval(envelope, wait: wait) {
+    writeDecision(response, raw: raw)
 }

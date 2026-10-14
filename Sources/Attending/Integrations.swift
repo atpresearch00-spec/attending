@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import CoreAudio
+import CoreMediaIO
 import UniformTypeIdentifiers
 
 // MARK: - External drives
@@ -218,7 +219,12 @@ enum GoogleDrive {
 @MainActor final class MeetingMonitor: ObservableObject {
     enum ZoomState: Equatable { case muted, live }
     @Published private(set) var micInUse = false
+    /// Some app (other than Attending's own mirror) has a camera on.
+    @Published private(set) var cameraInUse = false
+    /// True while Attending's mirror has the camera, so it isn't reported as another app.
+    var ownCameraActive = false { didSet { readCameras() } }
     @Published private(set) var zoom: ZoomState?
+    private var cameraDevices: [CMIOObjectID] = []
     private var device = AudioObjectID(kAudioObjectUnknown)
     private var listeners: [(AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertyListenerBlock)] = []
     private var pollTask: Task<Void, Never>?
@@ -232,6 +238,33 @@ enum GoogleDrive {
             listeners.append((AudioObjectID(kAudioObjectSystemObject), defaultInput, block))
         }
         attach()
+        watchCameras()
+    }
+
+    // MARK: Camera
+
+    /// Listens for any camera starting or stopping (CoreMediaIO, no polling).
+    private func watchCameras() {
+        var address = CMIOObjectPropertyAddress(mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices), mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal), mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
+        var size: UInt32 = 0
+        guard CMIOObjectGetPropertyDataSize(CMIOObjectID(kCMIOObjectSystemObject), &address, 0, nil, &size) == noErr, size > 0 else { return }
+        var devices = [CMIOObjectID](repeating: 0, count: Int(size) / MemoryLayout<CMIOObjectID>.size)
+        guard CMIOObjectGetPropertyData(CMIOObjectID(kCMIOObjectSystemObject), &address, 0, nil, size, &size, &devices) == noErr else { return }
+        cameraDevices = devices
+        for device in devices {
+            var running = CMIOObjectPropertyAddress(mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere), mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal), mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
+            CMIOObjectAddPropertyListenerBlock(device, &running, .main) { _, _ in MainActor.assumeIsolated { [weak self] in self?.readCameras() } }
+        }
+        readCameras()
+    }
+    private func readCameras() {
+        let running = cameraDevices.contains { device in
+            var address = CMIOObjectPropertyAddress(mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere), mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal), mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
+            var value: UInt32 = 0, size = UInt32(MemoryLayout<UInt32>.size)
+            return CMIOObjectGetPropertyData(device, &address, 0, nil, size, &size, &value) == noErr && value != 0
+        }
+        let inUse = running && !ownCameraActive
+        if cameraInUse != inUse { cameraInUse = inUse }
     }
     /// Toggles Zoom's microphone through its own menu item.
     func toggleZoomMute() {

@@ -35,10 +35,25 @@ git tag -f "v$version" >/dev/null
 git push -q origin HEAD
 git push -qf origin "v$version"
 if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
-  assets=("$OLDPWD/dist/Attending-$version.zip" "$OLDPWD/dist/Attending-$version.zip.sig")
+  assets=("$OLDPWD/dist/Attending-$version.zip" "$OLDPWD/dist/Attending-$version.zip.sig" "$OLDPWD/dist/Attending-$version.dmg")
   gh release create "v$version" $assets --title "Attending $version" --notes "$notes" 2>/dev/null \
     || gh release upload "v$version" $assets --clobber
   print "Released v$version on GitHub"
 else
-  print "Pushed v$version. Upload dist/Attending-$version.zip and its .sig as a GitHub Release (see docs/releasing.md)."
+  print "Pushed v$version. Upload dist/Attending-$version.zip, its .sig and the .dmg as a GitHub Release (see docs/releasing.md)."
+fi
+
+# Homebrew: with a clone of the tap (HOMEBREW_TAP, default ~/Developer/homebrew-tap), bump
+# the cask. Only notarized releases go there; Homebrew users would otherwise hit Gatekeeper.
+tap=${HOMEBREW_TAP:-$HOME/Developer/homebrew-tap}
+cd "$OLDPWD"
+if [[ -d "$tap/.git" ]]; then
+  if xcrun stapler validate -q build/Attending.app 2>/dev/null; then
+    sha=$(shasum -a 256 "dist/Attending-$version.zip" | cut -d' ' -f1)
+    mkdir -p "$tap/Casks"
+    sed -e "s/version \"VERSION\"/version \"$version\"/" -e "s/sha256 \"SHA256\"/sha256 \"$sha\"/" packaging/homebrew/attending.rb > "$tap/Casks/attending.rb"
+    ( cd "$tap" && git add Casks/attending.rb && git commit -qm "attending $version" && git push -q ) && print "Updated the Homebrew cask to $version"
+  else
+    print "Skipped the Homebrew cask: this release isn't notarized."
+  fi
 fi

@@ -40,9 +40,11 @@ public struct AgentEvent: Codable, Sendable {
     public var projectPath: String
     public var kind: Kind
     public var timestamp: Date
-    public enum Kind: String, Codable, Sendable { case started, working, attention, completed, failed, ended }
-    public init(id: UUID = UUID(), provider: ProviderID, sessionID: String, projectPath: String, kind: Kind, timestamp: Date = Date()) {
-        self.id = id; self.provider = provider; self.sessionID = sessionID; self.projectPath = projectPath; self.kind = kind; self.timestamp = timestamp
+    /// The conversation's name, when the provider has one. Sessions keep the last name they were given.
+    public var title: String?
+    public enum Kind: String, Codable, Sendable { case started, working, attention, completed, failed, ended, stopped }
+    public init(id: UUID = UUID(), provider: ProviderID, sessionID: String, projectPath: String, kind: Kind, timestamp: Date = Date(), title: String? = nil) {
+        self.id = id; self.provider = provider; self.sessionID = sessionID; self.projectPath = projectPath; self.kind = kind; self.timestamp = timestamp; self.title = title
     }
     public func validate(now: Date = Date()) -> Bool {
         !sessionID.isEmpty && sessionID.utf8.count <= 256 && !sessionID.contains(where: { $0.isNewline || $0.asciiValue == 0 }) && projectPath.hasPrefix("/") && projectPath.utf8.count < 4096 && !projectPath.contains("\0") && timestamp <= now.addingTimeInterval(60)
@@ -59,15 +61,15 @@ public struct AppState: Codable, Sendable, Equatable {
         let id = event.provider.rawValue + ":" + event.sessionID
         let previous = sessions.first(where: { $0.id == id })
         guard previous == nil || event.timestamp >= previous!.lastActiveAt else { return }
-        var status: SessionStatus = switch event.kind { case .started: .idle; case .working: .working; case .attention: .attention; case .completed: .completed; case .failed: .failed; case .ended: .stale }
-        var activity: String = switch event.kind { case .started: "Session started"; case .working: "Agent is working"; case .attention: "Respond in the provider session"; case .completed: "Turn completed"; case .failed: "Provider reported an error"; case .ended: "Session ended" }
+        var status: SessionStatus = switch event.kind { case .started, .stopped: .idle; case .working: .working; case .attention: .attention; case .completed: .completed; case .failed: .failed; case .ended: .stale }
+        var activity: String = switch event.kind { case .started: "Session started"; case .working: "Agent is working"; case .attention: "Respond in the provider session"; case .completed: "Turn completed"; case .failed: "Provider reported an error"; case .ended: "Session ended"; case .stopped: "Stopped" }
         if let cutoff = liveEventsSince, event.timestamp < cutoff,
            [.working, .attention, .idle].contains(status) {
             status = .stale
             activity = "Waiting for a fresh provider event"
         }
         let started = event.kind == .working && previous?.status != .working && previous?.status != .attention ? event.timestamp : previous?.startedAt ?? event.timestamp
-        let session = AgentSession(id: id, provider: event.provider, externalID: event.sessionID, projectPath: event.projectPath, title: URL(fileURLWithPath: event.projectPath).lastPathComponent, status: status, startedAt: started, lastActiveAt: event.timestamp, latestActivity: activity)
+        let session = AgentSession(id: id, provider: event.provider, externalID: event.sessionID, projectPath: event.projectPath, title: event.title ?? previous?.title ?? SessionNaming.folderTitle(event.projectPath), status: status, startedAt: started, lastActiveAt: event.timestamp, latestActivity: activity)
         sessions.removeAll { $0.id == id }; sessions.insert(session, at: 0)
         if sessions.count > 200 { sessions.removeLast(sessions.count - 200) }
     }
@@ -77,6 +79,31 @@ public struct AppState: Codable, Sendable, Equatable {
         }
     }
 }
+/// Readable names for sessions that have no conversation title yet.
+public enum SessionNaming {
+    /// "Google Drive" rather than "GoogleDrive-name@example.com", "Home" rather than the user name,
+    /// and the task name for Codex's dated task folders (~/Documents/Codex/2026-10-01/fix-the-build).
+    public static func folderTitle(_ path: String, home: String = NSHomeDirectory()) -> String {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        let name = url.lastPathComponent
+        if url.path == URL(fileURLWithPath: home).standardizedFileURL.path { return "Home" }
+        if name.hasPrefix("GoogleDrive-") { return "Google Drive" }
+        if name.hasPrefix("OneDrive-") { return "OneDrive" }
+        if name == "com~apple~CloudDocs" { return "iCloud Drive" }
+        if isScratch(path) { return "Temporary folder" }
+        let parent = url.deletingLastPathComponent()
+        if parent.deletingLastPathComponent().lastPathComponent == "Codex", parent.lastPathComponent.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil {
+            let words = name.replacingOccurrences(of: "-", with: " ")
+            return words.prefix(1).uppercased() + words.dropFirst()
+        }
+        return name
+    }
+    /// Temporary and build folders: sessions there are tests and scratch work, not projects.
+    public static func isScratch(_ path: String) -> Bool {
+        path == "/tmp" || path.hasPrefix("/tmp/") || path == "/private/tmp" || path.hasPrefix("/private/tmp/") || path.hasPrefix("/private/var/folders/") || path.contains("/.build/")
+    }
+}
+
 public enum StorageError: Error { case unsupportedVersion(Int) }
 public actor StateStore {
     public let url: URL

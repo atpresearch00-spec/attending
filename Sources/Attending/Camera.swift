@@ -10,7 +10,8 @@ import UniformTypeIdentifiers
 @MainActor final class MirrorController: NSObject, ObservableObject {
     @Published private(set) var authorized = AVCaptureDevice.authorizationStatus(for: .video) == .authorized
     @Published private(set) var denied = [.denied, .restricted].contains(AVCaptureDevice.authorizationStatus(for: .video))
-    @Published private(set) var running = false
+    @Published private(set) var running = false { didSet { if running != oldValue { onRunning?(running) } } }
+    var onRunning: ((Bool) -> Void)?
     @Published private(set) var cameras: [AVCaptureDevice] = []
     @Published private(set) var cameraID: String?
     /// Seconds left on the self-timer while it counts down.

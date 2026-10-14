@@ -1,0 +1,42 @@
+name: Install problem
+description: Attending won't download, open or run.
+labels: [install]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Sorry it isn't working. Most install problems are macOS blocking apps that aren't notarized yet; the steps in the README's Install section fix those. If that didn't help, fill this in.
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: Apple menu › About This Mac.
+      placeholder: macOS 26.1
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac model
+      placeholder: MacBook Air (M2, 2022)
+    validations:
+      required: true
+  - type: dropdown
+    id: step
+    attributes:
+      label: Where does it stop?
+      options:
+        - The download doesn't start or finish
+        - macOS says it can't verify the developer
+        - macOS says the app is damaged
+        - It opens but nothing shows in the notch
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What happened
+      description: The exact message, and a screenshot if you can.
+    validations:
+      required: true

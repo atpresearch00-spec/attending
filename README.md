@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Your MacBook's notch, turned into a med school command center.</b><br>
-  Exam countdowns, readings, Anki, prayer times, music, AI and your coding agents,<br>
+  Board countdowns, readings, Anki, prayer times, music, AI and your coding agents,<br>
   one hover away. Native, private and fast.
 </p>
 
@@ -28,10 +28,16 @@ Hover the notch for a glance at your day. Click it to open everything else.
 <img src="docs/images/home.png" width="680" alt="Home: tracker, Anki, Claude usage, weather, calendar, Salah and focus timer">
 
 ### 📚 Study
+- **Boards countdown.** COMLEX, USMLE, shelf and block exams with presets, a dedicated period and days off. Count in days, weeks or study days (hours and minutes on exam day), with urgency colors and a calm mode. Your question bank's daily pace ("41 questions today"), practice exams with a score trend, milestone drop-downs, an exam-day checklist, good luck on exam morning, and a countdown card to share. Pin it to the closed notch.
+- **Exam week mode.** One switch for a quieter notch and your Focus mode, plus a bedtime nudge the two nights before an exam.
+- **Score tracker.** Block and shelf exam scores through the year, with the trend.
 - **Reading tracker sync.** Connect a Google Sheets reading tracker (PBL, block or course readings) and check off chapters from the notch. It shows percent done, days to the exam, and **exactly how many pages to read today**, with a notch alert when you hit the goal.
 - **Anki.** Cards due, reviews done today and your streak. Start a deck's review from the notch (uses AnkiConnect).
-- **Focus timer and study sessions.** A Pomodoro timer that runs in the notch, with an optional Anki review goal.
-- **Exam countdowns.**
+- **Focus timer and study sessions.** A Pomodoro timer that runs in the notch, with an optional Anki review goal, plus optional water-and-stretch reminders.
+- **Anki card of the day,** flipped with a click.
+- **Quick lookup** in AMBOSS, PubMed or UpToDate.
+- **Weekly recap:** focus hours, study time, pages, questions and Anki reviews, as a card to share.
+- **Screen time and a distraction guard.** See today's time studying, with AI and on distractions. During a focus timer, opening YouTube, Instagram or a game gets a gentle nudge.
 
 <img src="docs/images/study.png" width="680" alt="Study: reading tracker with today's goal">
 
@@ -39,6 +45,7 @@ Hover the notch for a glance at your day. Click it to open everything else.
 - Prayer times for your location, calculated on your Mac (ISNA, MWL, Egyptian, Karachi or Umm al-Qura, with Standard or Hanafi Asr).
 - Tap a prayer to mark it prayed, and keep a streak of days with all five.
 - The notch drops down at each prayer time, and 15 minutes before one ends if you haven't prayed.
+- A Jummah reminder before your masjid's khutbah, an optional Surah Al-Kahf reminder, the Hijri date and the Qibla direction.
 
 <img src="docs/images/salah-alert.png" width="480" alt="Time for Asr alert with a Prayed button">
 
@@ -47,29 +54,40 @@ Hover the notch for a glance at your day. Click it to open everything else.
 - Spotify extras (optional): like, add to a playlist, see when a song came from Smart Shuffle, and edit your Up Next queue.
 
 ### 🤖 AI and agents
-- **Ask AI:** Claude and ChatGPT inside the notch (<kbd>⌘</kbd><kbd>⇧</kbd><kbd>Space</kbd>), signed in with your own accounts.
+- **Agents, answered from the notch:** Claude's multiple-choice questions and plan approvals become cards you answer in the notch. A check drops down when Claude, Codex or ChatGPT finishes.
+- **Ask AI:** Claude, ChatGPT and Gemini inside the notch (<kbd>⌘</kbd><kbd>⇧</kbd><kbd>Space</kbd>), signed in with your own accounts. Switch between them instantly, get a check when an answer is ready, and turn off any you don't use.
 - **Claude usage meter:** your 5-hour and weekly limits at a glance.
-- **Agents:** see your Claude Code and Codex sessions, and approve or deny permission requests from the notch. While an agent works, the stethoscope turns into a live ECG.
+- **Agents:** see your Claude Code and Codex sessions by name, including Codex in the ChatGPT app, and approve or deny Claude Code permission requests from the notch. While an agent works, the stethoscope turns into a live ECG.
 
 ### 🧰 Everyday
-- **Drag a file to the notch** to AirDrop it, keep it on the Shelf, or upload it to Google Drive.
+- **Drag a file to the notch** to AirDrop it, keep it on the Shelf, or upload it to Google Drive. Shelf files convert in one click: HEIC to JPG, a smaller PDF, or a smaller video, PDFs on the Shelf merge into one, photos become a single PDF, text copies straight out of an image, and papers go to Zotero in one click.
+- **Clean screen mode** for recording and presenting: hides desktop icons and keeps calendar titles, agent names, music and clipboard out of the notch.
+- **Teleprompter** right under the camera, so you read your script while looking at the lens. It pauses on hover and stays out of screen shares and recordings.
 - **Screenshot drops:** new screenshots land on your Shelf, ready to drag anywhere.
 - **Clipboard history** with pins.
 - **Camera:** a quick mirror with photos, self-timer, zoom, grid, ring light and macOS video effects.
 - **Status in the notch:** volume, brightness, battery and AirPods battery displays; download and video-export progress; meeting countdowns with a Join button; one-click eject for external drives.
-- **Weather**, your next calendar event, and Outlook unread count.
+- **Calendars:** Google, Outlook and school calendars (through macOS accounts or a private iCal link), with a reminder before each class: "Cardio lecture in 10 min · Room 1".
+- **Utilities that replace other apps:** keep awake (automatically while agents work), quit apps when their last window closes, Rectangle-style window snapping, quick notes, and mic and camera-in-use dots.
+- **Put the island anywhere:** under the notch, top left, top right or bottom center. Choose and order the tabs you want in the header. It hides while something is full screen and while apps you pick (like DaVinci Resolve) are in front.
+- **Weather** and Outlook unread count.
 
 Everything is optional and can be turned off in Settings.
 
 ## Install
 
-**Requirements:** a Mac with a notch (it also works below the menu bar on other displays) and macOS 14.2 or later.
+**Requirements:** a Mac with Apple silicon (M1 or newer) and macOS 14.2 or later. A notch is best, but it also works below the menu bar on other displays. Download it on your Mac, not your phone.
 
 ### Download
 
-Grab the latest `Attending.zip` from [Releases](../../releases), unzip it, and move **Attending** to Applications.
+1. Download `Attending-x.y.z.dmg` from [the latest release](../../releases/latest) (under **Assets**) and open it.
+2. Drag **Attending** onto the **Applications** folder beside it.
+3. Open Attending from Applications. The first time, macOS says it can't verify the developer, because the app isn't notarized by Apple yet. Click **Done** (not Move to Trash).
+4. Open **System Settings › Privacy & Security**, scroll to the bottom, and click **Open Anyway** next to "Attending was blocked". Enter your password and click **Open**.
 
-The app isn't notarized yet, so the first time you open it, macOS may say it can't verify the developer. Open **System Settings › Privacy & Security** and click **Open Anyway**. You only need to do this once.
+Attending then welcomes you and walks through the permissions it uses, one button each. You only do this once. If **Open Anyway** isn't there, open Attending again and go straight back to Privacy & Security: the button only shows for a while after a blocked launch. If you opened it from Downloads instead, Attending offers to move itself to Applications, where it can update itself.
+
+**Still stuck?** [Report an install problem](../../issues/new?template=install-problem.yml) with your macOS version and a screenshot. Once it's running, **Settings › Help › Report a problem** fills in your versions and permissions for you.
 
 **Updates are automatic.** Attending checks for new releases about once a day and tells you in the notch. Click **Update**, and it downloads, verifies and installs the new version, then relaunches. You can also check in Settings › Updates.
 
@@ -97,15 +115,19 @@ To use your own bundle ID or signing identity, copy `scripts/local.env.example` 
 | Reading tracker | Study › Trackers. Follow the steps to deploy a small Google Apps Script in your own account. Attending never sees your Google password. |
 | Anki | Install the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on. |
 | Spotify extras | Settings › Media. Create a free app at [developer.spotify.com](https://developer.spotify.com/dashboard) with the redirect URI `http://127.0.0.1:43821/callback`, then paste its Client ID. |
-| Claude Code agents | Run `python3 scripts/install-claude-hooks.py --settings ~/.claude/settings.json --bridge /Applications/Attending.app/Contents/MacOS/attending-bridge --approvals --status-line`. Review what it would change, then add `--apply`. |
+| Claude Code agents | Click **Connect** in the setup window or Settings › Agents. It adds Attending's hooks and usage status line to `~/.claude/settings.json`, keeps everything else and saves a backup. (From the repo, `scripts/install-claude-hooks.py` does the same.) |
+| Codex and ChatGPT agents | Nothing to set up. Sessions appear automatically. |
 | Claude usage meter | Sign in to Claude in the Ask AI tab. |
+| Google or Outlook calendars | Settings › Calendars › Add account (or paste a private iCal link). |
+| Quit apps, window snapping, Zoom mute | Allow Attending in System Settings › Privacy & Security › Accessibility. |
 
 ## Privacy
 
 Attending runs entirely on your Mac. There are no accounts, no analytics and no servers.
 - **Calendar, location, camera and clipboard** stay on the device. The clipboard is kept in memory only.
-- **Tokens and secrets** (Spotify, the Sheets bridge) are stored in files only your user can read.
-- **Agent monitoring** records session status, never transcripts or tool contents.
+- **Tokens and secrets** (Spotify, the Sheets bridge, private calendar links) are stored in files only your user can read. Notes stay in a local text file.
+- **Screen time** keeps only daily totals per category (studying, AI, distractions). Window titles are read in the moment to sort them and never stored.
+- **Agent monitoring** records session names and status, never transcripts or tool contents.
 
 ## Development
 

@@ -4,6 +4,8 @@ import Darwin
 public enum ApprovalDecision: String, Codable, Sendable {
     case allowOnce
     case deny
+    /// Leave it to the provider: the bridge returns no decision, so the provider asks as usual.
+    case askInProvider
 }
 
 public struct ApprovalRequest: Codable, Identifiable, Sendable, Equatable {
@@ -44,7 +46,7 @@ public struct ApprovalRequest: Codable, Identifiable, Sendable, Equatable {
     public var displayText: String { command ?? toolInputJSON }
 
     public func validate(now: Date = Date()) -> Bool {
-        guard provider == .claudeCode,
+        guard provider == .claudeCode || provider == .codex,
               !sessionID.isEmpty, sessionID.utf8.count <= 256,
               !sessionID.contains(where: { $0.isNewline || $0.asciiValue == 0 }),
               projectPath.hasPrefix("/"), projectPath.utf8.count < 4_096,
@@ -88,11 +90,43 @@ public struct ApprovalResponseEnvelope: Codable, Sendable {
     public let requestID: UUID
     public let token: String
     public let decision: ApprovalDecision
+    /// Answers to a multiple-choice question (AskUserQuestion): question text to the chosen
+    /// label, or several labels joined with ", ", or the user's own words.
+    public let answers: [String: String]?
 
-    public init(requestID: UUID, token: String, decision: ApprovalDecision) {
+    public init(requestID: UUID, token: String, decision: ApprovalDecision, answers: [String: String]? = nil) {
         self.requestID = requestID
         self.token = token
         self.decision = decision
+        self.answers = answers
+    }
+}
+
+/// A multiple-choice question from Claude Code's AskUserQuestion tool, read from the
+/// approval request's tool input.
+public struct ProviderQuestion: Sendable, Equatable, Identifiable {
+    public struct Option: Sendable, Equatable, Hashable { public let label: String; public let detail: String? }
+    public var id: String { text }
+    public let text: String
+    public let header: String?
+    public let options: [Option]
+    public let multiSelect: Bool
+
+    /// The questions in an AskUserQuestion input, or nil for any other tool.
+    public static func parse(toolName: String, inputJSON: String) -> [ProviderQuestion]? {
+        guard toolName == "AskUserQuestion",
+              let object = try? JSONSerialization.jsonObject(with: Data(inputJSON.utf8)) as? [String: Any],
+              let questions = object["questions"] as? [[String: Any]], !questions.isEmpty else { return nil }
+        let parsed = questions.compactMap { question -> ProviderQuestion? in
+            guard let text = question["question"] as? String, !text.isEmpty else { return nil }
+            let options = (question["options"] as? [Any] ?? []).compactMap { option -> Option? in
+                if let label = option as? String { return Option(label: label, detail: nil) }
+                guard let option = option as? [String: Any], let label = option["label"] as? String else { return nil }
+                return Option(label: label, detail: (option["description"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+            }
+            return ProviderQuestion(text: text, header: question["header"] as? String, options: options, multiSelect: question["multiSelect"] as? Bool ?? false)
+        }
+        return parsed.count == questions.count ? parsed : nil
     }
 }
 
@@ -269,13 +303,13 @@ public actor ApprovalBroker {
     public func pendingRequests() -> [ApprovalRequest] { currentSnapshot() }
 
     @discardableResult
-    public func respond(to id: UUID, decision: ApprovalDecision) -> Bool {
+    public func respond(to id: UUID, decision: ApprovalDecision, answers: [String: String]? = nil) -> Bool {
         guard let item = pending[id], item.envelope.request.expiresAt > Date() else {
             removePending(id)
             publishSnapshot()
             return false
         }
-        let response = ApprovalResponseEnvelope(requestID: id, token: item.envelope.token, decision: decision)
+        let response = ApprovalResponseEnvelope(requestID: id, token: item.envelope.token, decision: decision, answers: answers)
         do {
             try ApprovalWire.send(response, to: item.descriptor)
             removePending(id)

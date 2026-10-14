@@ -180,13 +180,17 @@ struct GlanceView: View {
                 HStack(spacing: 6) {
                     if model.calendarEnabled, let event = calendar.next { eventTile(event) }
                     if let (tracker, summary) = sheets.primaryTracker {
-                        let days = summary.daysLeft ?? 0
                         let goal = sheets.goal(for: tracker, summary)
-                        GlanceTile(symbol: "graduationcap.fill", label: "\(summary.shortName) · \(days == 0 ? "today" : "\(days)d")", value: "\(Int((summary.fractionDone * 100).rounded()))%",
+                        // No exam date in the sheet: just the tracker's name.
+                        let when = summary.daysLeft.map { $0 == 0 ? " · today" : " · \($0)d" } ?? ""
+                        GlanceTile(symbol: "graduationcap.fill", label: "\(summary.shortName)\(when)", value: "\(Int((summary.fractionDone * 100).rounded()))%",
                                    detail: goal.map { $0.met ? "✓ today" : "\($0.done)/\($0.target)p" } ?? (summary.pagesLeft > 0 ? nil : "done"), tint: Theme.done, progress: summary.fractionDone,
                                    help: "\(summary.pagesDone) of \(summary.pagesTotal) pages read" + (goal.map { " · \($0.done) of today's \($0.target)" } ?? "")) { model.open(.study) }
-                    } else if model.showExams, let exam = model.exams.next {
-                        GlanceTile(symbol: "graduationcap.fill", label: exam.name, value: "\(exam.daysLeft)d", tint: exam.daysLeft <= 14 ? Theme.attention : Theme.primary, help: "Days until \(exam.name)") { model.open(.study) }
+                    } else if model.showExams, let exam = model.exams.pinned, model.exams.visible(exam) {
+                        let today = model.exams.questionsToday(exam)
+                        GlanceTile(symbol: "graduationcap.fill", label: exam.shortName, value: model.exams.compact(exam),
+                                   detail: today.target.map { $0 == 0 ? "bank done" : "\(today.done)/\($0) Qs" }, tint: model.exams.urgency(exam),
+                                   help: "Until \(exam.name)") { model.open(.study) }
                     }
                     if let stats = anki.stats {
                         GlanceTile(symbol: "rectangle.stack.fill", label: "Anki", value: "\(stats.dueReviews + stats.learning)", detail: stats.reviewedToday > 0 ? "\(stats.reviewedToday) done" : "due",
@@ -424,7 +428,7 @@ struct AgentsSummaryCard: View {
                     Button { model.selectedTab = .agents } label: {
                         HStack {
                             Image(systemName: "hand.raised.fill")
-                            Text("\(approvals) waiting for approval").font(.system(size: 12, weight: .semibold))
+                            Text("\(approvals) waiting for you").font(.system(size: 12, weight: .semibold))
                             Spacer()
                             Image(systemName: "chevron.right").font(.system(size: 10, weight: .bold))
                         }
@@ -685,71 +689,50 @@ struct MediaCard: View {
 
 struct AgentsView: View {
     @ObservedObject var model: AppModel
-    @State private var filter = "Active"
+    private var showRecent: Bool { model.agentsShowRecent }
     var body: some View {
-        if model.selectedSession != nil {
-            VStack(alignment: .leading, spacing: 10) {
-                Button { model.selectedSessionID = nil; model.draft = "" } label: {
-                    Label("All sessions", systemImage: "chevron.left").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.secondary)
-                }.buttonStyle(.plain)
-                ScrollView { ChatView(model: model).frame(maxWidth: .infinity, alignment: .leading) }.scrollIndicators(.never)
-            }
+        if let session = model.selectedSession {
+            SessionDetail(model: model, session: session)
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
-                    ForEach(["Active", "Recent", "Projects"], id: \.self) { name in
-                        Button { filter = name } label: {
-                            Text(name == "Active" && !model.active.isEmpty ? "Active \(model.active.count)" : name)
-                                .font(.system(size: 12, weight: .semibold))
-                                .padding(.horizontal, 12).frame(height: 26)
-                                .foregroundStyle(filter == name ? Theme.primary : Theme.tertiary)
-                                .background(Capsule().fill(filter == name ? Theme.raised : .clear))
-                        }.buttonStyle(.plain)
-                    }
+                    tab(model.active.isEmpty ? "Active" : "Active \(model.active.count)", selected: !showRecent) { model.agentsShowRecent = false }
+                    tab("Recent", selected: showRecent) { model.agentsShowRecent = true }
                     Spacer()
-                    PillButton(title: "New Codex session", symbol: "plus") { model.newCodexProject() }
-                        .disabled(!model.codexDetected || model.codexBusy)
+                    if model.codexDetected {
+                        IconButton(symbol: "plus", help: "Start a Codex session in a project folder") { model.newCodexProject() }
+                            .disabled(model.codexBusy)
+                    }
                 }
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        if !model.claudeApprovals.isEmpty || !model.codexApprovals.isEmpty {
-                            ApprovalInbox(model: model)
-                        }
-                        switch filter {
-                        case "Projects": projects
-                        case "Recent": list(model.state.sessions)
-                        default: list(model.active)
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !model.claudeApprovals.isEmpty || !model.codexApprovals.isEmpty { ApprovalInbox(model: model) }
+                        let sessions = showRecent ? model.recent : model.active
+                        if sessions.isEmpty { empty } else { ForEach(sessions) { SessionCard(model: model, session: $0) } }
+                        if showRecent && !sessions.isEmpty {
+                            Button("Clear history") { model.clearHistory() }
+                                .buttonStyle(.plain).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.tertiary)
+                                .frame(maxWidth: .infinity).padding(.top, 4)
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading)
                 }.scrollIndicators(.never)
             }
         }
     }
-    @ViewBuilder private func list(_ sessions: [AgentSession]) -> some View {
-        if sessions.isEmpty {
-            Card {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("No sessions yet").font(.system(size: 15, weight: .semibold))
-                    Text(model.claudeDetected ? "Claude Code sessions appear here once Attending hooks are installed. New sessions pick them up automatically." : "Install Claude Code or Codex to see your agents here.")
-                        .font(.system(size: 12)).foregroundStyle(Theme.tertiary)
-                }
-            }
-        } else {
-            ForEach(sessions) { session in SessionCard(model: model, session: session) }
-        }
+    private func tab(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 12).frame(height: 26)
+                .foregroundStyle(selected ? Theme.primary : Theme.tertiary)
+                .background(Capsule().fill(selected ? Theme.raised : .clear))
+        }.buttonStyle(.plain)
     }
-    private var projects: some View {
-        ForEach(model.state.projects) { project in
-            Card {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text(project.name).font(.system(size: 14, weight: .semibold))
-                        Spacer()
-                        IconButton(symbol: "folder", help: "Open in Finder", size: 22) { NSWorkspace.shared.open(URL(fileURLWithPath: project.path, isDirectory: true)) }
-                    }
-                    Text(project.path).font(.system(size: 10)).foregroundStyle(Theme.tertiary).lineLimit(1).truncationMode(.middle)
-                    ForEach(model.state.sessions.filter { $0.projectPath == project.path }) { SessionRow(session: $0, compact: true) }
-                }
+    private var empty: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(showRecent ? "Nothing this week" : "All quiet").font(.system(size: 14, weight: .semibold))
+                Text(showRecent ? "Finished sessions from the last 7 days show here." : "Claude Code and Codex sessions show here while they work, including Codex in the ChatGPT app.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -760,49 +743,64 @@ struct SessionCard: View {
     let session: AgentSession
     @State private var hovering = false
     var body: some View {
-        HStack(spacing: 10) {
-            SessionRow(session: session, compact: false)
-            if hovering {
-                IconButton(symbol: "folder", help: "Open project in Finder", size: 24) { NSWorkspace.shared.open(URL(fileURLWithPath: session.projectPath, isDirectory: true)) }
-                IconButton(symbol: "text.bubble", help: "View session", size: 24) { model.draft = ""; model.selectedSessionID = session.id }
-            }
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(hovering ? Theme.raised : Theme.card))
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .onTapGesture { model.draft = ""; model.selectedSessionID = session.id }
+        SessionRow(session: session, compact: false)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(hovering ? Theme.raised : Theme.card))
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .onTapGesture { model.draft = ""; model.selectedSessionID = session.id }
     }
 }
 
 struct SessionRow: View {
     let session: AgentSession
     let compact: Bool
+    @Environment(\.cleanScreen) private var clean
     var body: some View {
         HStack(spacing: 10) {
             ProviderBadge(provider: session.provider, status: session.status)
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.title).font(.system(size: compact ? 13 : 14, weight: .semibold)).lineLimit(1)
-                HStack(spacing: 5) {
-                    Text(session.provider.title)
-                    Text("·")
-                    Text(session.status.title).foregroundStyle(session.status == .idle ? Theme.tertiary : session.status.color)
-                    if !compact && session.latestActivity != session.status.title {
-                        Text("·")
-                        Text(session.latestActivity).lineLimit(1)
-                    }
-                }.font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                Text(clean ? "\(session.provider.title) session" : session.title).font(.system(size: compact ? 13 : 14, weight: .semibold)).lineLimit(1)
+                (Text(session.provider.title + " · ") + Text(session.statusLabel).foregroundStyle(session.statusColor))
+                    .font(.system(size: 11)).foregroundStyle(Theme.tertiary).lineLimit(1)
             }
             Spacer(minLength: 4)
-            if session.status == .working {
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    Text("\(max(0, Int(context.date.timeIntervalSince(session.startedAt) / 60)))m").font(.system(size: 11, weight: .medium, design: .rounded)).monospacedDigit().foregroundStyle(Theme.tertiary)
-                }
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                Text(session.timeLabel(now: context.date)).font(.system(size: 11, weight: .medium, design: .rounded)).monospacedDigit().foregroundStyle(Theme.tertiary)
             }
         }
-        .frame(minHeight: compact ? 36 : 40)
+        .frame(minHeight: compact ? 36 : 38)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+    }
+}
+
+extension AgentSession {
+    var statusLabel: String {
+        switch status {
+        case .working: "Working"
+        case .attention: "Needs you"
+        case .completed: "Done"
+        case .failed: "Error"
+        case .idle: latestActivity == "Stopped" ? "Stopped" : "Ready"
+        case .stale: "Inactive"
+        }
+    }
+    var statusColor: Color { status == .idle || status == .stale ? Theme.tertiary : status.color }
+    /// How long it's been working, or how long ago it was last active.
+    func timeLabel(now: Date) -> String {
+        if status == .working { return Self.span(now.timeIntervalSince(startedAt)) }
+        let ago = now.timeIntervalSince(lastActiveAt)
+        if ago < 60 { return "now" }
+        if ago < 3600 { return "\(Int(ago / 60))m ago" }
+        if ago < 86400 { return "\(Int(ago / 3600))h ago" }
+        if ago < 2 * 86400 { return "Yesterday" }
+        return "\(Int(ago / 86400))d ago"
+    }
+    private static func span(_ seconds: TimeInterval) -> String {
+        let minutes = max(0, Int(seconds / 60))
+        if minutes == 0 { return "<1m" }
+        return minutes < 60 ? "\(minutes)m" : "\(minutes / 60)h \(minutes % 60)m"
     }
 }
 

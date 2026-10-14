@@ -107,4 +107,16 @@ public enum PrayerTimes {
     private static func rad(_ d: Double) -> Double { d * .pi / 180 }
     private static func deg(_ r: Double) -> Double { r * 180 / .pi }
     private static func fix(_ a: Double, _ b: Double) -> Double { let r = a.truncatingRemainder(dividingBy: b); return r < 0 ? r + b : r }
+
+    /// Direction of the Kaaba from a location, in degrees clockwise from true north.
+    public static func qiblaBearing(latitude: Double, longitude: Double) -> Double {
+        let kaaba = (lat: 21.4225 * .pi / 180, lon: 39.8262 * .pi / 180)
+        let lat = latitude * .pi / 180, delta = kaaba.lon - longitude * .pi / 180
+        let bearing = atan2(sin(delta), cos(lat) * tan(kaaba.lat) - sin(lat) * cos(delta)) * 180 / .pi
+        return (bearing + 360).truncatingRemainder(dividingBy: 360)
+    }
+    /// "NE" style compass point for a bearing.
+    public static func compassPoint(_ bearing: Double) -> String {
+        ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][Int((bearing + 22.5) / 45) % 8]
+    }
 }

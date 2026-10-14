@@ -112,7 +112,24 @@ final class NotchPanel: NSPanel {
                 model.media.updateSpectrum(awake: model.awake)
             }
         layout(animated: false); panel.orderFrontRegardless()
+        model.stepAside.screen = { [weak self] in self?.islandScreen() }
+        model.stepAside.onChange = { [weak self] _ in self?.updateVisibility() }
+        model.prompter.placement = { [weak self] in
+            guard let screen = self?.islandScreen() else { return nil }
+            let top = screen.safeAreaInsets.top
+            let width = top > 0 ? (screen.auxiliaryTopRightArea?.minX ?? 0) - (screen.auxiliaryTopLeftArea?.maxX ?? 0) : 0
+            return (screen, top, max(0, width))
+        }
+        model.prompter.onRunningChange = { [weak self] running in
+            if running { self?.model.setMode(.idle) }
+            self?.updateVisibility()
+        }
+        model.stepAside.start()
         Task { await model.start() }
+        model.onboarding.model = model
+        DispatchQueue.main.async { [weak self] in
+            if !MoveToApplications.offerIfNeeded() { self?.model.onboarding.showIfNeeded() }
+        }
         runDevelopmentFlags()
     }
 
@@ -137,12 +154,19 @@ final class NotchPanel: NSPanel {
 
     // MARK: Layout and animation
 
+    /// The menu-bar screen when chosen in Settings (an external display, say); otherwise the notch's.
+    private func islandScreen() -> NSScreen? {
+        let notched = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 })
+        let chosen = model.islandOnMainScreen ? NSScreen.screens.first : nil
+        return chosen ?? notched ?? NSScreen.main ?? NSScreen.screens.first
+    }
     private func metrics() -> NotchMetrics? {
-        guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? NSScreen.screens.first else { return nil }
-        return NotchMetrics(screen: screen.frame, visible: screen.visibleFrame, notchLeft: screen.auxiliaryTopLeftArea?.maxX, notchRight: screen.auxiliaryTopRightArea?.minX, height: screen.safeAreaInsets.top, scale: screen.backingScaleFactor)
+        guard let screen = islandScreen() else { return nil }
+        let useNotch = model.islandAnchor == .notch && screen.safeAreaInsets.top > 0
+        return NotchMetrics(screen: screen.frame, visible: screen.visibleFrame, notchLeft: useNotch ? screen.auxiliaryTopLeftArea?.maxX : nil, notchRight: useNotch ? screen.auxiliaryTopRightArea?.minX : nil, height: useNotch ? screen.safeAreaInsets.top : 0, scale: screen.backingScaleFactor)
     }
     private func targetRect(_ m: NotchMetrics) -> CGRect {
-        model.mode == .idle ? IslandGeometry.collapsed(m, wing: model.idleWing) : IslandGeometry.panel(m, size: model.panelSize)
+        model.mode == .idle ? IslandGeometry.collapsed(m, wing: model.idleWing, anchor: model.islandAnchor) : IslandGeometry.panel(m, size: model.panelSize, anchor: model.islandAnchor)
     }
     /// Converts a screen rect into SwiftUI coordinates inside `canvas` (y down).
     private func local(_ rect: CGRect, in canvas: CGRect) -> CGRect {
@@ -203,7 +227,20 @@ final class NotchPanel: NSPanel {
         panel.displayIfNeeded()
     }
 
+    /// Hides the island while it steps aside (full screen, an editor in front, the
+    /// teleprompter) unless it's open, and brings it back with any alert that waited.
+    private func updateVisibility() {
+        guard model.awake, !model.pickerOpen else { return }
+        if model.islandAside {
+            if panel.isVisible { panel.orderOut(nil) }
+        } else if !panel.isVisible {
+            lastLayoutKey = ""; layout(animated: false); panel.orderFrontRegardless()
+            model.releaseHeldAlert()
+        }
+    }
+
     private func modeChanged() {
+        updateVisibility()
         if model.mode != .idle { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
         layout(animated: true)
         updateOpenMonitors()
@@ -344,6 +381,10 @@ final class NotchPanel: NSPanel {
             menu.addItem(withTitle: "Open Attending", action: #selector(openPanel), keyEquivalent: "").target = self
             menu.addItem(withTitle: "Ask AI", action: #selector(askAI), keyEquivalent: "").target = self
             menu.addItem(withTitle: "Settings…", action: #selector(settings), keyEquivalent: ",").target = self
+            menu.addItem(withTitle: model.prompter.running ? "Stop Teleprompter" : "Teleprompter", action: #selector(togglePrompter), keyEquivalent: "").target = self
+            menu.addItem(withTitle: "Setup Guide…", action: #selector(setupGuide), keyEquivalent: "").target = self
+            let clean = menu.addItem(withTitle: "Clean Screen", action: #selector(toggleCleanScreen), keyEquivalent: "")
+            clean.target = self; clean.state = model.cleanScreen.on ? .on : .off
             menu.addItem(.separator())
             menu.addItem(withTitle: "Quit Attending", action: #selector(quit), keyEquivalent: "q").target = self
             statusItem.menu = menu; statusItem.button?.performClick(nil); statusItem.menu = nil
@@ -353,6 +394,11 @@ final class NotchPanel: NSPanel {
     @objc private func askAI() { model.openAssistant() }
     @objc private func settings() { model.open(.settings) }
     @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func toggleCleanScreen() { model.cleanScreen.toggle() }
+    @objc private func setupGuide() { model.onboarding.show(step: .setup) }
+    @objc private func togglePrompter() {
+        if model.prompter.running || model.prompter.words > 0 { model.prompter.toggle() } else { model.open(.prompter) }
+    }
     private func suspend() {
         model.awake = false; hoverTask?.cancel(); leaveTask?.cancel()
         model.clipboard.stop(); model.mirror.stop()
@@ -361,7 +407,8 @@ final class NotchPanel: NSPanel {
     private func resume() {
         model.awake = true
         if model.clipboardEnabled { model.clipboard.start() }
-        lastLayoutKey = ""; layout(animated: false); panel.orderFrontRegardless()
+        lastLayoutKey = ""; layout(animated: false)
+        if !model.islandAside { panel.orderFrontRegardless() }
     }
 }
 let app = NSApplication.shared

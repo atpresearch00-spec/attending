@@ -1,0 +1,17 @@
+name: Something's not working
+description: A bug, a crash or something that looks wrong.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. A screenshot helps.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Filled in when you use Settings › Report a problem. No personal information.
+      render: text

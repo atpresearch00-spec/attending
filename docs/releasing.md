@@ -20,11 +20,11 @@ public GitHub repo as one clean commit, and tagged.
    ```sh
    ./scripts/publish.sh "Short release notes"
    ```
-   This runs the tests, builds and signs `dist/Attending-<version>.zip` (plus its `.sig`),
+   This runs the tests, builds and signs `dist/Attending-<version>.zip` (plus its `.sig`) and `.dmg`,
    copies the public files into the public clone, commits, tags `v<version>` and pushes.
    With the GitHub CLI signed in, it also creates the GitHub Release and attaches the zip.
    Otherwise, open the repo's **Releases › Draft a new release** on github.com, pick the tag,
-   and upload the zip and its `.sig`. Installed copies see the new version within a day.
+   and upload the zip, its `.sig` and the `.dmg`. Installed copies see the new version within a day.
 
 ## Keys to back up
 
@@ -47,11 +47,40 @@ themselves anymore, so copy both somewhere safe, like an encrypted USB drive or 
    `ATTENDING_RELEASE=1 SIGN_IDENTITY="Attending Release Signing" ./scripts/create-signing-identity.sh`.
 5. Run `./scripts/publish.sh "First public release"`.
 
-## Notarization (optional, recommended)
+## Notarization (recommended)
 
-Downloads are signed with a basic ad-hoc signature, so macOS asks people to click
-**Open Anyway** in Privacy & Security the first time. With an Apple Developer account
-($99/year), sign with a *Developer ID Application* certificate and notarize the zip
-(`xcrun notarytool submit dist/Attending-<version>.zip --wait`, then
-`xcrun stapler staple build/Attending.app` and re-zip). Then the app opens with no warning.
-Notarizing needs full Xcode's tools.
+Without it, macOS asks people to click **Open Anyway** in Privacy & Security the first time,
+which is where most install problems come from. Homebrew also only lists notarized apps.
+With an Apple Developer account ($99/year), `scripts/release.sh` signs with your Developer ID
+and notarizes the zip and the DMG automatically. Set it up once:
+
+1. **Join the Apple Developer Program** at developer.apple.com (as an individual).
+2. **Create a Developer ID Application certificate:** developer.apple.com › Certificates ›
+   + › *Developer ID Application*, following the steps to make a certificate request with
+   Keychain Access, then double-click the downloaded certificate to install it.
+   `security find-identity -v -p codesigning` should list it.
+3. **Make an app-specific password** at account.apple.com › Sign-In and Security.
+4. **Save the notary credentials** in your keychain (it asks for that password):
+   ```sh
+   xcrun notarytool store-credentials attending-notary --apple-id YOUR_APPLE_ID --team-id YOUR_TEAM_ID
+   ```
+   Your team ID is on developer.apple.com › Membership.
+
+From then on `./scripts/release.sh` (and `publish.sh`) prints "Signed with Developer ID … and
+notarized." Every build already uses the hardened runtime and the entitlements in
+`scripts/Attending.entitlements` (camera, microphone for the visualizer, calendars,
+location, Apple Events), so nothing changes in the app itself.
+
+**One thing to expect:** the first notarized release is signed by a different certificate
+than earlier ones, so macOS asks people once more for Accessibility, Camera and Calendar
+after that update. Mention it in the release notes.
+
+## Homebrew (after notarization)
+
+People can then install with `brew install --cask med-abdullah/tap/attending`:
+
+1. Create a public repository on github.com named `homebrew-tap`.
+2. Clone it to `~/Developer/homebrew-tap` (or set `HOMEBREW_TAP`).
+
+`publish.sh` then writes `Casks/attending.rb` from `packaging/homebrew/attending.rb` with the
+new version and checksum, and pushes it, but only for notarized releases.

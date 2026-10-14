@@ -150,6 +150,17 @@ import AttendingCore
         return ((response as? HTTPURLResponse)?.statusCode ?? 0, data.isEmpty ? nil : try? JSONSerialization.jsonObject(with: data))
     }
 
+    /// Spotify renamed playlist "tracks" to "items" and moved liked songs to /me/library;
+    /// the old endpoints now answer 403. Tries the current endpoint first, then the old one.
+    private func apiWithFallback(_ attempts: [(method: String, path: String, body: Any?)]) async -> (Int, Any?) {
+        var result: (Int, Any?) = (0, nil)
+        for attempt in attempts {
+            result = await api(attempt.method, attempt.path, body: attempt.body)
+            if ![403, 404, 410].contains(result.0) { break }
+        }
+        return result
+    }
+
     // MARK: Player state
 
     /// Called when the Spotify track changes; debounced so skipping fast stays cheap.
@@ -190,25 +201,24 @@ import AttendingCore
             isSmartPick = false
         }
         if let id = currentID {
-            let (_, contains) = await api("GET", "/me/tracks/contains?ids=\(id)")
+            let uri = currentURI ?? "spotify:track:\(id)"
+            let (_, contains) = await apiWithFallback([("GET", "/me/library/contains?uris=\(Self.encode(uri))", nil), ("GET", "/me/tracks/contains?ids=\(id)", nil)])
             liked = (contains as? [Bool])?.first
         }
     }
     private func playlistTrackURIs(_ id: String) async -> Set<String> {
         var uris = Set<String>()
-        var path: String? = "/playlists/\(id)/tracks?fields=items(track(uri)),next&limit=100"
+        // Current API: /items, each entry's song under "item". Older: /tracks, under "track".
+        var (status, json) = await apiWithFallback([("GET", "/playlists/\(id)/items?fields=items(item(uri)),next&limit=100", nil),
+                                                    ("GET", "/playlists/\(id)/tracks?fields=items(track(uri)),next&limit=100", nil)])
         var pages = 0
-        while let next = path, pages < 30 {
-            var (status, json) = await api("GET", next)
-            if status == 404 || status == 410 {
-                // Newer API versions call playlist entries "items".
-                (status, json) = await api("GET", next.replacingOccurrences(of: "/tracks?", with: "/items?"))
-            }
+        while pages < 30 {
             guard status == 200, let page = json as? [String: Any] else { break }
             for entry in page["items"] as? [[String: Any]] ?? [] {
-                if let uri = (entry["track"] as? [String: Any])?["uri"] as? String { uris.insert(uri) }
+                if let uri = ((entry["item"] ?? entry["track"]) as? [String: Any])?["uri"] as? String { uris.insert(uri) }
             }
-            path = (page["next"] as? String).map { $0.replacingOccurrences(of: "https://api.spotify.com/v1", with: "") }
+            guard let next = (page["next"] as? String)?.replacingOccurrences(of: "https://api.spotify.com/v1", with: "") else { break }
+            (status, json) = await api("GET", next)
             pages += 1
         }
         return uris
@@ -305,8 +315,8 @@ import AttendingCore
     func addCurrent(to playlist: Playlist) {
         guard let uri = currentURI else { return }
         Task {
-            var (status, _) = await api("POST", "/playlists/\(playlist.id)/tracks", body: ["uris": [uri]])
-            if status == 404 || status == 410 { (status, _) = await api("POST", "/playlists/\(playlist.id)/items", body: ["uris": [uri]]) }
+            let (status, _) = await apiWithFallback([("POST", "/playlists/\(playlist.id)/items", ["uris": [uri]]),
+                                                     ("POST", "/playlists/\(playlist.id)/tracks", ["uris": [uri]])])
             if (200..<300).contains(status) {
                 contextTracks[playlist.id]?.insert(uri)
                 if playlist.id == context?.id { isSmartPick = false }
@@ -321,12 +331,14 @@ import AttendingCore
     func toggleLike() {
         guard let id = currentID, let current = liked else { return }
         liked = !current
+        let uri = currentURI ?? "spotify:track:\(id)", method = current ? "DELETE" : "PUT"
         Task {
-            let (status, _) = await api(current ? "DELETE" : "PUT", "/me/tracks?ids=\(id)")
+            let (status, _) = await apiWithFallback([(method, "/me/library?uris=\(Self.encode(uri))", nil), (method, "/me/tracks?ids=\(id)", nil)])
             if !(200..<300).contains(status) { liked = current }
         }
     }
 
+    private static func encode(_ value: String) -> String { value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? value }
     private static func randomString(_ length: Int) -> String {
         let characters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
         return String((0..<length).map { _ in characters.randomElement()! })

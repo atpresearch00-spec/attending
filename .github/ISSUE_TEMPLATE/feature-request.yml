@@ -1,0 +1,11 @@
+name: Feature request
+description: Something you'd like Attending to do.
+labels: [idea]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: What you'd use it for, in med school or otherwise.
+    validations:
+      required: true

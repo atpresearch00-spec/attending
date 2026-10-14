@@ -40,6 +40,13 @@ import Foundation
     /// Only public builds update themselves.
     var enabled: Bool { Bundle.main.bundleIdentifier == Self.publicBundleID }
 
+    /// The latest-release endpoint. ATTENDING_UPDATE_FEED can point at a local JSON file of
+    /// the same shape, to test updates without publishing.
+    private static var feed: URL {
+        ProcessInfo.processInfo.environment["ATTENDING_UPDATE_FEED"].flatMap(URL.init(string:))
+            ?? URL(string: "https://api.github.com/repos/\(repository)/releases/latest")!
+    }
+
     func start() { schedule() }
 
     private func schedule() {
@@ -59,12 +66,12 @@ import Foundation
         state = .checking
         defer { UserDefaults.standard.set(Date(), forKey: "lastUpdateCheck") }
         do {
-            var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(Self.repository)/releases/latest")!)
+            var request = URLRequest(url: Self.feed)
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             request.setValue("Attending/\(current)", forHTTPHeaderField: "User-Agent")
             request.timeoutInterval = 20
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200,
+            guard (response as? HTTPURLResponse)?.statusCode == 200 || Self.feed.isFileURL,
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let tag = json["tag_name"] as? String,
                   let assets = json["assets"] as? [[String: Any]] else { throw UpdateError.message("Couldn't read the latest release.") }

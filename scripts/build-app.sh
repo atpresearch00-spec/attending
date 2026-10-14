@@ -49,7 +49,11 @@ PLIST
 # scripts/create-signing-identity.sh); fall back to ad-hoc signing without it.
 identity="$SIGN_IDENTITY"
 security find-certificate -c "$identity" >/dev/null 2>&1 || identity="-"
-codesign --force --sign "$identity" "$app/Contents/MacOS/attending-bridge"
-codesign --force --sign "$identity" "$app/Contents/Resources/libAttendingMedia.dylib"
-codesign --force --sign "$identity" "$app"
+# Every build runs with the hardened runtime that notarization requires, so anything it
+# would break shows up here first. Developer ID builds also get a secure timestamp.
+runtime=(--options runtime)
+[[ "$identity" == "Developer ID Application"* ]] && runtime+=(--timestamp)
+codesign --force "${runtime[@]}" --sign "$identity" "$app/Contents/MacOS/attending-bridge"
+codesign --force "${runtime[@]}" --sign "$identity" "$app/Contents/Resources/libAttendingMedia.dylib"
+codesign --force "${runtime[@]}" --entitlements scripts/Attending.entitlements --sign "$identity" "$app"
 printf '%s\n' "$app"

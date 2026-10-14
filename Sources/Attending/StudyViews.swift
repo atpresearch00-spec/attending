@@ -28,8 +28,8 @@ struct QuickStrip: View {
             if let summary = model.sheets.primary, let days = summary.daysLeft {
                 Chip(symbol: "graduationcap.fill", text: "\(summary.shortName) · \(days)d · \(Int((summary.fractionDone * 100).rounded()))% done", tint: days <= 7 ? Theme.attention : Theme.secondary) { model.selectedTab = .study }
                     .help("\(summary.pagesDone) of \(summary.pagesTotal) pages read")
-            } else if model.showExams, let exam = exams.next {
-                Chip(symbol: "graduationcap.fill", text: "\(exam.name) · \(exam.daysLeft)d", tint: exam.daysLeft <= 14 ? Theme.attention : Theme.secondary) { model.selectedTab = .study }
+            } else if model.showExams, let exam = exams.pinned, exams.visible(exam) {
+                Chip(symbol: "graduationcap.fill", text: "\(exam.shortName) · \(exams.compact(exam))", tint: exams.urgency(exam) == Theme.primary ? Theme.secondary : exams.urgency(exam)) { model.selectedTab = .study }
             }
             if outlook.installed {
                 Chip(symbol: "envelope.fill", text: outlook.unread.map { $0 > 0 ? "\($0)" : "Mail" } ?? "Mail", tint: (outlook.unread ?? 0) > 0 ? Theme.working : Theme.secondary) { outlook.open() }
@@ -101,9 +101,9 @@ struct ShelfSwitcher: View {
     @ObservedObject var model: AppModel
     var body: some View {
         HStack(spacing: 2) {
-            ForEach([Tab.shelf, .clipboard], id: \.self) { tab in
+            ForEach([Tab.shelf, .clipboard, .notes], id: \.self) { tab in
                 Button { model.selectedTab = tab } label: {
-                    Text(tab == .shelf ? "Files" : "Clipboard").font(.system(size: 11, weight: .semibold))
+                    Text(tab == .shelf ? "Files" : tab.title).font(.system(size: 11, weight: .semibold)).fixedSize()
                         .padding(.horizontal, 10).frame(height: 22)
                         .foregroundStyle(model.selectedTab == tab ? Theme.primary : Theme.tertiary)
                         .background(Capsule().fill(model.selectedTab == tab ? Theme.raised : .clear))
@@ -131,6 +131,10 @@ struct MicIndicator: View {
             Image(systemName: "mic.fill").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.attention)
                 .help("An app is using the microphone")
         }
+        if meeting.cameraInUse {
+            Image(systemName: "video.fill").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.done)
+                .help("An app is using the camera")
+        }
     }
 }
 
@@ -144,14 +148,16 @@ struct StudyView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
+                LookupBar()
+                if model.showExams && !exams.upcoming.isEmpty { BoardsCard(exams: exams, onShare: model.shareExam, turnOnExamWeek: { model.examWeek = true }) }
                 TrackersCard(sheets: sheets)
                 HStack(alignment: .top, spacing: 10) {
                     AnkiCard(anki: anki).frame(maxWidth: .infinity)
-                    VStack(spacing: 10) {
-                        StudySessionCard(model: model, timer: model.timer, anki: anki)
-                        if model.showExams { ExamsCard(exams: exams) }
-                    }.frame(width: 250)
+                    StudySessionCard(model: model, timer: model.timer, anki: anki).frame(width: 250)
                 }
+                if model.showExams && exams.upcoming.isEmpty { BoardsCard(exams: exams, onShare: model.shareExam, turnOnExamWeek: { model.examWeek = true }) }
+                if model.showExams { ScoresCard(exams: exams) }
+                WeekCard(model: model, activity: model.activity)
             }
         }.scrollIndicators(.never)
         .onAppear { anki.refresh(); sheets.scanDrive(); if sheets.trackers.contains(where: { sheets.states[$0.id] == nil }) { sheets.refreshAll() } }
@@ -259,6 +265,7 @@ struct AnkiCard: View {
                         }
                         Spacer(minLength: 0)
                     }
+                    if let card = stats.cardOfDay { CardOfDay(front: card.front, back: card.back) }
                     if !anki.decks.isEmpty {
                         VStack(spacing: 4) {
                             ForEach(anki.decks.prefix(4)) { deck in
@@ -315,44 +322,6 @@ struct WeekBars: View {
     }
 }
 
-struct ExamsCard: View {
-    @ObservedObject var exams: ExamStore
-    @State private var adding = false
-    @State private var name = ""
-    @State private var date = Calendar.current.date(byAdding: .month, value: 1, to: Date()) ?? Date()
-    var body: some View {
-        Card(padding: 12) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    SectionLabel(text: "Exams")
-                    Spacer()
-                    IconButton(symbol: adding ? "xmark" : "plus", help: adding ? "Cancel" : "Add exam", size: 20) { adding.toggle() }
-                }
-                if adding {
-                    TextField("COMLEX Level 1", text: $name).textFieldStyle(.roundedBorder).font(.system(size: 12))
-                    DatePicker("Date", selection: $date, displayedComponents: .date).labelsHidden().datePickerStyle(.field)
-                    PillButton(title: "Add", symbol: "plus", tint: Theme.done, prominent: true) { exams.add(name: name, date: date); name = ""; adding = false }
-                } else if exams.exams.isEmpty {
-                    Text("Add COMLEX, USMLE or block exams for a countdown.").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
-                } else {
-                    ForEach(exams.exams.prefix(4)) { exam in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(exam.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                                Text(exam.date.formatted(date: .abbreviated, time: .omitted)).font(.system(size: 10)).foregroundStyle(Theme.tertiary)
-                            }
-                            Spacer()
-                            Text(exam.daysLeft == 0 ? "Today" : "\(exam.daysLeft)d")
-                                .font(.system(size: 18, weight: .semibold, design: .rounded)).monospacedDigit()
-                                .foregroundStyle(exam.daysLeft <= 14 ? Theme.attention : Theme.primary)
-                        }
-                        .contextMenu { Button("Remove") { exams.remove(exam) } }
-                    }
-                }
-            }
-        }
-    }
-}
 
 struct TrackersCard: View {
     @ObservedObject var sheets: SheetTracker
@@ -364,8 +333,19 @@ struct TrackersCard: View {
     var body: some View {
         Card(padding: 14) {
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    SectionLabel(text: "PBL trackers")
+                HStack(spacing: 6) {
+                    SectionLabel(text: sheets.trackers.count > 1 ? "PBL tracker" : "PBL trackers")
+                    if sheets.trackers.count > 1 && !adding {
+                        ForEach(sheets.trackers) { tracker in
+                            let selected = tracker.id == shown?.id
+                            Button { withAnimation(.easeOut(duration: 0.15)) { sheets.pickedID = tracker.id.uuidString } } label: {
+                                Text(name(tracker)).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                                    .foregroundStyle(selected ? Theme.primary : Theme.tertiary)
+                                    .padding(.horizontal, 9).frame(height: 20)
+                                    .background(Capsule().fill(selected ? Theme.raised : .clear))
+                            }.buttonStyle(.plain)
+                        }
+                    }
                     Spacer()
                     if sheets.connected {
                         if !sheets.trackers.isEmpty { IconButton(symbol: "arrow.clockwise", help: "Refresh", size: 20) { sheets.refreshAll() } }
@@ -374,11 +354,25 @@ struct TrackersCard: View {
                 }
                 if !sheets.connected { setup } else {
                     if adding || sheets.trackers.isEmpty { addTracker }
-                    ForEach(sheets.trackers) { tracker in TrackerRow(sheets: sheets, tracker: tracker) }
+                    if let shown { TrackerRow(sheets: sheets, tracker: shown).id(shown.id) }
                 }
             }
         }
     }
+
+    /// The same tracker the hover glance and Home follow (your pick, also while it loads).
+    private var shown: SheetTracker.Tracker? {
+        if let picked = sheets.picked {
+            guard case .loaded(let summary) = sheets.states[picked.id] else { return picked }
+            if !sheets.pickLapsed(summary) { return picked }
+        }
+        return sheets.primaryTracker?.tracker ?? sheets.picked ?? sheets.trackers.first
+    }
+    private func name(_ tracker: SheetTracker.Tracker) -> String {
+        if case .loaded(let summary) = sheets.states[tracker.id], !summary.shortName.isEmpty { return summary.shortName }
+        return tracker.label.isEmpty ? "Tracker" : tracker.label
+    }
+    private func showNewest() { if let newest = sheets.trackers.last { sheets.pickedID = newest.id.uuidString } }
 
     /// One-time Apps Script setup: copy, deploy as a web app, paste the URL back.
     private var setup: some View {
@@ -418,13 +412,13 @@ struct TrackersCard: View {
                         Text(sheet.name).font(.system(size: 12)).lineLimit(1)
                         Text(sheet.modified, format: .relative(presentation: .named)).font(.system(size: 10)).foregroundStyle(Theme.tertiary)
                         Spacer()
-                        PillButton(title: "Add", symbol: "plus") { _ = sheets.add(link: sheet.link, label: sheet.name); adding = false }
+                        PillButton(title: "Add", symbol: "plus") { if sheets.add(link: sheet.link, label: sheet.name) { showNewest() }; adding = false }
                     }
                 }
             }
             HStack(spacing: 6) {
                 TextField("Or paste a Google Sheets link (open the tab you want first)", text: $link).textFieldStyle(.roundedBorder).font(.system(size: 11))
-                PillButton(title: "Add", symbol: "plus") { if sheets.add(link: link, label: "") { link = ""; adding = false } }
+                PillButton(title: "Add", symbol: "plus") { if sheets.add(link: link, label: "") { link = ""; adding = false; showNewest() } }
             }
         }
     }
@@ -620,8 +614,14 @@ struct SalahCard: View {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 6) {
                     SectionLabel(text: "Salah")
-                    if let place = salah.place { Text(place).font(.system(size: 10)).foregroundStyle(Theme.tertiary).lineLimit(1) }
+                    // The Islamic day begins at Maghrib.
+                    Text(SalahCard.hijri(salah.times[.maghrib].map { salah.now >= $0 } == true ? salah.now.addingTimeInterval(86400) : salah.now)).font(.system(size: 10)).foregroundStyle(Theme.tertiary).lineLimit(1)
+                        .help(salah.place.map { "Prayer times for \($0)" } ?? "Hijri date (Umm al-Qura)")
                     Spacer()
+                    if let qibla = salah.qibla {
+                        Text("Qibla \(Int(qibla.rounded()))° \(PrayerTimes.compassPoint(qibla))").font(.system(size: 10, weight: .medium)).monospacedDigit().foregroundStyle(Theme.tertiary)
+                            .help("Direction of the Kaaba, in degrees from true north")
+                    }
                     if salah.streak > 0 {
                         Label("\(salah.streak)", systemImage: "flame.fill").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.attention)
                             .help("\(salah.streak)-day streak of all five prayers")
@@ -642,7 +642,12 @@ struct SalahCard: View {
         }
     }
     @ViewBuilder private func headline(now: Date) -> some View {
-        if let current = salah.current, !salah.prayed.contains(current), let end = salah.end(of: current) {
+        if salah.jummahReminder, let jummah = salah.jummahToday, now < jummah.addingTimeInterval(45 * 60), salah.next?.prayer == .dhuhr || salah.current == .dhuhr {
+            HStack(spacing: 5) {
+                Text(now < jummah ? "Jummah \(Self.countdown(to: jummah, now: now))" : "Jummah now").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.done)
+                Text("· khutbah \(jummah.formatted(date: .omitted, time: .shortened))").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+            }
+        } else if let current = salah.current, !salah.prayed.contains(current), let end = salah.end(of: current) {
             HStack(spacing: 5) {
                 Text("\(current.title) now").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.done)
                 Text("· until \(end.formatted(date: .omitted, time: .shortened))").font(.system(size: 11)).foregroundStyle(Theme.secondary)
@@ -653,6 +658,14 @@ struct SalahCard: View {
                 Text("· \(next.time.formatted(date: .omitted, time: .shortened))").font(.system(size: 11)).foregroundStyle(Theme.secondary)
             }
         }
+    }
+    /// "27 Rabiʻ II 1448" (Umm al-Qura calendar).
+    static func hijri(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .islamicUmmAlQura)
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.dateFormat = "d MMMM y"
+        return formatter.string(from: date)
     }
     static func countdown(to date: Date, now: Date) -> String {
         let minutes = max(1, Int(date.timeIntervalSince(now) / 60))
@@ -697,7 +710,7 @@ struct NextPrayerChip: View {
         if let next = salah.next {
             HStack(spacing: 4) {
                 Image(systemName: "moon.stars.fill").font(.system(size: 9))
-                Text("\(next.prayer.title) \(next.time.formatted(date: .omitted, time: .shortened))").font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                Text("\(next.prayer.title) \(next.time.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()))").font(.system(size: 11, weight: .semibold)).lineLimit(1)
             }
             .foregroundStyle(Theme.secondary).fixedSize()
             .help("Next prayer")
@@ -815,5 +828,30 @@ struct ActivityRow: View {
             if let fraction = activity.fraction { return "\(Int(fraction * 100))%\(rate)" }
             return "\(activity.appName.map { "\($0) · " } ?? "")\(activity.sizeText)\(rate)"
         }
+    }
+}
+
+/// One due card a day, flipped with a click.
+struct CardOfDay: View {
+    let front: String
+    let back: String
+    @State private var flipped = false
+    var body: some View {
+        Button { withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { flipped.toggle() } } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text(flipped ? "ANSWER" : "CARD OF THE DAY").font(.system(size: 9, weight: .semibold)).tracking(1).foregroundStyle(flipped ? Theme.done : Theme.tertiary)
+                    Spacer()
+                    Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 9)).foregroundStyle(Theme.tertiary)
+                }
+                Text(flipped ? (back.isEmpty ? front : back) : front).font(.system(size: 12)).foregroundStyle(Theme.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true).lineLimit(6)
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.card))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(flipped ? "Show the front" : "Flip to the answer")
     }
 }

@@ -56,6 +56,7 @@ struct ShellView: View {
         .overlay {
             if model.dropTargeted { shape.stroke(Theme.working.opacity(0.8), lineWidth: 2) }
         }
+        .overlay { if model.confetti { ConfettiView().clipShape(shape) } }
     }
 
     private func islandShape(for mode: PanelMode) -> AnyShape {
@@ -82,6 +83,7 @@ struct ShellView: View {
             .padding(.bottom, 14)
             .frame(width: size.width, height: size.height, alignment: .top)
             .environment(\.notchBand, band)
+            .environment(\.cleanScreen, model.cleanScreen.on)
             .environment(\.notchWidth, model.notchWidth)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -168,6 +170,11 @@ struct WingsView: View {
                 }
                 MicIndicator(meeting: model.meeting)
                 if let event = model.calendar.imminent { MeetingChip(event: event) }
+                else if let exam = model.wingExam {
+                    Text(model.exams.compact(exam)).font(.system(size: 10, weight: .semibold, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(model.exams.urgency(exam) == Theme.primary ? Theme.secondary : model.exams.urgency(exam)).lineLimit(1).fixedSize()
+                        .help("\(exam.name): \(model.exams.compact(exam))")
+                }
                 if model.liveActivities { ActivityRing(center: model.activities) }
             }
             .frame(maxWidth: .infinity, alignment: .center)
@@ -185,8 +192,8 @@ struct ExpandedView: View {
     var body: some View {
         VStack(spacing: 10) {
             NotchRow {
-                ForEach(Array([Tab.home, .agents, .assistant, .study, .shelf].enumerated()), id: \.element) { index, tab in
-                    TabIcon(tab: tab, selected: model.selectedTab == tab || (tab == .shelf && model.selectedTab == .clipboard), badge: badge(for: tab)) { select(tab) }
+                ForEach(Array(([Tab.home] + model.headerTabs).prefix(9).enumerated()), id: \.element) { index, tab in
+                    TabIcon(tab: tab, selected: model.selectedTab == tab || (tab == .shelf && !model.headerTabs.contains(model.selectedTab) && (model.selectedTab == .clipboard || model.selectedTab == .notes)), badge: badge(for: tab)) { select(tab) }
                         .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
                 }
             } trailing: {
@@ -203,7 +210,7 @@ struct ExpandedView: View {
                     .foregroundStyle(battery.tint).fixedSize()
                     .help(battery.charging ? "Charging" : battery.onAC ? "On power" : "On battery")
                 }
-                TabIcon(tab: .mirror, selected: model.selectedTab == .mirror, badge: nil) { select(.mirror) }
+                KeepAwakeButton(keepAwake: model.keepAwake)
                 TabIcon(tab: .settings, selected: model.selectedTab == .settings, badge: nil) { select(.settings) }
             }
             if let error = model.error {
@@ -222,7 +229,9 @@ struct ExpandedView: View {
                 case .assistant: AssistantView(assistant: model.assistant, focusToken: model.assistantFocus)
                 case .study: StudyView(model: model, anki: model.anki, exams: model.exams, sheets: model.sheets)
                 case .shelf: ShelfView(model: model, shelf: model.shelf)
-                case .clipboard: ClipboardView(model: model, clipboard: model.clipboard)
+                case .clipboard: if model.cleanScreen.on { HiddenForCleanScreen(what: "Clipboard history") } else { ClipboardView(model: model, clipboard: model.clipboard) }
+                case .notes: if model.cleanScreen.on { HiddenForCleanScreen(what: "Notes") } else { NotesView(model: model) }
+                case .prompter: PrompterView(prompter: model.prompter)
                 case .mirror: MirrorView(mirror: model.mirror)
                 case .settings: ScrollView { SettingsView(model: model) }.scrollIndicators(.never)
                 }
@@ -281,11 +290,34 @@ struct HomeView: View {
     private var content: some View {
         VStack(spacing: 10) {
             QuickStrip(model: model, launcher: model.launcher, drives: model.drives, outlook: model.outlook, exams: model.exams)
+            if model.examWeek { examWeekContent } else { regularContent }
+            Spacer(minLength: 0)
+        }
+    }
+    /// Exam week: the countdown and study cards only.
+    private var examWeekContent: some View {
+        VStack(spacing: 10) {
+            BoardsCard(exams: model.exams, onShare: model.shareExam)
+            HStack(alignment: .top, spacing: 10) {
+                VStack(spacing: 10) {
+                    StudyTodayCard(model: model, sheets: model.sheets)
+                    TimerCard(timer: timer)
+                }
+                VStack(spacing: 10) {
+                    if model.salahEnabled { SalahCard(salah: model.salah) }
+                    AnkiMiniCard(anki: model.anki)
+                }.frame(width: 272)
+            }
+        }
+    }
+    private var regularContent: some View {
+        VStack(spacing: 10) {
+            if !model.headerTabs.contains(.agents) && (!model.claudeApprovals.isEmpty || !model.codexApprovals.isEmpty) { ApprovalInbox(model: model) }
             if model.liveActivities { ActivityList(center: model.activities, limit: 2) }
             if model.mediaControls { MediaCard(media: media, volume: model.volume) }
             HStack(alignment: .top, spacing: 10) {
                 VStack(spacing: 10) {
-                    AgentsSummaryCard(model: model)
+                    if model.headerTabs.contains(.agents) || !model.active.isEmpty { AgentsSummaryCard(model: model) }
                     StudyTodayCard(model: model, sheets: model.sheets)
                     UsageCard(model: model, usage: model.usage)
                     TimerCard(timer: timer)
@@ -296,7 +328,6 @@ struct HomeView: View {
                     AnkiMiniCard(anki: model.anki)
                 }.frame(width: 272)
             }
-            Spacer(minLength: 0)
         }
     }
 }
@@ -466,9 +497,18 @@ struct ShelfView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 ShelfSwitcher(model: model)
-                Text("Park files here, then drag them out anywhere.").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
-                Spacer()
+                // The hint gives way to the buttons once there are files.
+                if shelf.items.isEmpty { Text("Park files here, then drag them out anywhere.").font(.system(size: 11)).foregroundStyle(Theme.tertiary).lineLimit(1) }
+                Spacer(minLength: 8)
                 if !shelf.items.isEmpty {
+                    if shelf.items.contains(where: { FileConverter.isImage($0.url) }) {
+                        PillButton(title: "Photos to PDF", symbol: "doc.richtext") { model.shelfImagesToPDF() }
+                            .help("Make one PDF from the photos and screenshots on the Shelf, in Shelf order")
+                    }
+                    if shelf.items.filter({ FileConverter.isPDF($0.url) }).count >= 2 {
+                        PillButton(title: "Merge PDFs", symbol: "doc.on.doc") { model.mergeShelfPDFs() }
+                            .help("Join the PDFs on the Shelf into one, in Shelf order")
+                    }
                     PillButton(title: "AirDrop all", symbol: "square.and.arrow.up") { model.airDrop(shelf.items.map(\.url)) }
                     PillButton(title: "Clear", symbol: nil) { shelf.clear() }
                 }
@@ -488,7 +528,7 @@ struct ShelfView: View {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 10) {
                         airDropTile.frame(width: 92, height: 92)
-                        ForEach(shelf.items) { item in ShelfTile(shelf: shelf, item: item, airDrop: { model.airDrop([item.url]) }, saveToDrive: { model.saveToDrive([item.url]) }) }
+                        ForEach(shelf.items) { item in ShelfTile(shelf: shelf, item: item, airDrop: { model.airDrop([item.url]) }, saveToDrive: { model.saveToDrive([item.url]) }, convert: { model.convert(item.url, to: $0) }, copyText: { model.copyText(from: item.url) }, addToZotero: { model.addToZotero(item.url) }) }
                     }
                 }.scrollIndicators(.never)
             }
@@ -530,6 +570,9 @@ struct ShelfTile: View {
     let item: ShelfItem
     var airDrop: () -> Void
     var saveToDrive: () -> Void
+    var convert: (FileConverter.Kind) -> Void = { _ in }
+    var copyText: () -> Void = {}
+    var addToZotero: () -> Void = {}
     @State private var hovering = false
     var body: some View {
         VStack(spacing: 6) {
@@ -541,6 +584,15 @@ struct ShelfTile: View {
         .overlay(alignment: .topTrailing) {
             if hovering { IconButton(symbol: "xmark", help: "Remove from shelf", size: 18, filled: true) { shelf.remove(item) }.padding(4) }
         }
+        .overlay(alignment: .topLeading) {
+            if hovering {
+                HStack(spacing: 2) {
+                    if FileConverter.isImage(item.url) { IconButton(symbol: "text.viewfinder", help: "Copy text from image", size: 18, filled: true) { copyText() } }
+                    if FileConverter.isPDF(item.url) && ZoteroImporter.installed { IconButton(symbol: "books.vertical", help: "Add to Zotero", size: 18, filled: true) { addToZotero() } }
+                    if let kind = FileConverter.options(for: item.url).first { IconButton(symbol: kind.symbol, help: kind.title, size: 18, filled: true) { convert(kind) } }
+                }.padding(4)
+            }
+        }
         .onHover { hovering = $0 }
         .onTapGesture(count: 2) { shelf.open(item) }
         .onDrag { NSItemProvider(contentsOf: item.url) ?? NSItemProvider() }
@@ -549,6 +601,9 @@ struct ShelfTile: View {
             Button("Show in Finder") { shelf.reveal(item) }
             Button("AirDrop") { airDrop() }
             Button("Save to Google Drive") { saveToDrive() }
+            ForEach(FileConverter.options(for: item.url), id: \.self) { kind in Button(kind.title) { convert(kind) } }
+            if FileConverter.isImage(item.url) { Button("Copy Text from Image") { copyText() } }
+            if FileConverter.isPDF(item.url) && ZoteroImporter.installed { Button("Add to Zotero") { addToZotero() } }
             Divider()
             Button("Remove from Shelf") { shelf.remove(item) }
         }
@@ -720,7 +775,16 @@ struct SettingsView: View {
                 Toggle("Celebrate finished turns", isOn: $model.completionNotifications)
             }
             group("Updates") { UpdatesSection(updater: model.updater) }
+            if model.downloads.enabled { group("Downloads") { DownloadsSection(stats: model.downloads) } }
+            group("Tabs") { TabsSettings(model: model) }
             group("Notch") {
+                Picker("Position", selection: Binding(get: { model.islandAnchor }, set: { model.islandAnchor = $0 })) {
+                    ForEach(IslandAnchor.allCases, id: \.self) { Text($0.title).tag($0) }
+                }.frame(maxWidth: 320)
+                if NSScreen.screens.count > 1 { Toggle("Show on the display with the menu bar", isOn: $model.islandOnMainScreen) }
+                StepAsideSettings(stepAside: model.stepAside)
+                Toggle("Clean screen (for recording and presenting)", isOn: Binding(get: { model.cleanScreen.on }, set: { model.cleanScreen.set($0) }))
+                note("Hides desktop icons, calendar titles, agent session names, what's playing, clipboard and notes. Also in the menu bar menu. Finder restarts to hide the icons.")
                 Toggle("Peek on hover", isOn: $model.hoverEnabled)
                 Toggle("Close when the pointer leaves or you click away", isOn: $model.autoClose)
                 Toggle("Switch tabs by hovering over them", isOn: $hoverTabs)
@@ -762,16 +826,19 @@ struct SettingsView: View {
                 }
                 if let usageMessage { note(usageMessage) }
             }
+            if model.calendarEnabled {
+                group("Calendars") {
+                    CalendarsSection(calendar: calendar)
+                    Picker("Remind me before classes and events", selection: $model.eventLead) {
+                        Text("Off").tag(0); ForEach([5, 10, 15, 30], id: \.self) { Text("\($0) min").tag($0) }
+                    }.frame(maxWidth: 380)
+                }
+            }
             group("Outlook & Google") {
                 HStack {
                     Text("Outlook unread count")
                     Spacer()
                     Text(model.outlook.installed ? (AXIsProcessTrusted() ? "Connected" : "Needs Accessibility") : "Outlook not installed").foregroundStyle(Theme.tertiary)
-                }
-                HStack {
-                    note("For Outlook events in Next Up, add your school account in Internet Accounts and turn on Calendars.")
-                    Spacer()
-                    PillButton(title: "Internet Accounts", symbol: nil) { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Internet-Accounts-Settings.extension")!) }
                 }
                 HStack {
                     Text("Google Drive for desktop")
@@ -781,20 +848,34 @@ struct SettingsView: View {
                 }
                 note("PBL trackers connect through a small script in your own Google account (Study tab).")
             }
+            group("Keep awake") {
+                Toggle("Keep the Mac awake while an agent is working", isOn: Binding(get: { model.keepAwake.withAgents }, set: { model.keepAwake.withAgents = $0 }))
+                note("The screen can still sleep; long Claude or Codex runs keep going. The coffee cup at the top keeps the screen on too: click to toggle, right-click for 30 minutes to 4 hours.")
+            }
+            group("Window snapping") { SnappingSettings(snapper: model.snapper) }
+            group("Quit apps") { AutoQuitSettings(autoQuit: model.autoQuit) }
             group("Automation") {
                 HStack { Text("When an agent starts, run Shortcut"); Spacer(); TextField("e.g. Focus On", text: $model.focusStartShortcut).textFieldStyle(.roundedBorder).frame(width: 150) }
                 HStack { Text("When agents finish, run Shortcut"); Spacer(); TextField("e.g. Focus Off", text: $model.focusEndShortcut).textFieldStyle(.roundedBorder).frame(width: 150) }
                 note("Make these in the Shortcuts app with a \"Set Focus\" action to turn on Do Not Disturb while agents work.")
             }
             group("Study") {
-                Toggle("Show manual exam countdowns", isOn: $model.showExams)
-                note("Exam dates are read from your PBL trackers automatically.")
+                note("Tracker exam dates are read from your PBL trackers automatically. Board exams are below.")
+                Toggle("Weekly recap on Sunday evening", isOn: Binding(get: { model.activity.sundayRecap }, set: { model.activity.sundayRecap = $0 }))
+                Picker("Water and stretch reminder", selection: $model.breakEvery) {
+                    Text("Off").tag(0); ForEach([45, 60, 90], id: \.self) { Text("Every \($0) min").tag($0) }
+                }.frame(maxWidth: 380)
+                note("Only while you're at your Mac, 8 AM to 10 PM, and never during a Pomodoro break.")
+                Toggle("Screen time: studying, AI and distractions", isOn: Binding(get: { model.screenTime.enabled }, set: { model.screenTime.enabled = $0 }))
+                Toggle("Distraction guard during focus timers", isOn: Binding(get: { model.screenTime.guardFocus }, set: { model.screenTime.guardFocus = $0 }))
+                note("Every 30 seconds while you're at your Mac, the front app (or browser tab title) is sorted as studying, AI or a distraction. Only the totals are kept, on this Mac. During a focus timer, opening YouTube, Instagram, games and the like gets a gentle nudge.")
                 HStack {
                     Text("Google Sheets connector")
                     Spacer()
                     if model.sheets.connected { Button("Disconnect") { model.sheets.disconnect() } } else { Text("Set up in Study").foregroundStyle(Theme.tertiary) }
                 }
             }
+            group("Boards") { BoardsSettings(model: model, exams: model.exams) }
             group("Capture") {
                 Toggle("Screenshot drops", isOn: Binding(get: { model.screenshotDrops }, set: { model.setScreenshotDrops($0) }))
                 note("New screenshots and recordings pop out of the notch and land on your Shelf.")
@@ -811,7 +892,20 @@ struct SettingsView: View {
                     ForEach(PrayerTimes.Asr.allCases, id: \.self) { Text($0.title).tag($0) }
                 }.frame(maxWidth: 380)
                 Toggle("Notch alert at each prayer time and 15 minutes before it ends", isOn: $model.salahAlerts)
-                note("Times are calculated on this Mac for your location\(model.salah.place.map { " (\($0))" } ?? ""). ISNA is common in North America; match your local masjid's timetable.")
+                Toggle("Jummah reminder on Fridays", isOn: Binding(get: { model.salah.jummahReminder }, set: { model.salah.jummahReminder = $0 }))
+                if model.salah.jummahReminder {
+                    HStack {
+                        DatePicker("Khutbah at", selection: Binding(
+                            get: { Calendar.current.startOfDay(for: Date()).addingTimeInterval(TimeInterval(model.salah.jummahMinutes * 60)) },
+                            set: { let c = Calendar.current.dateComponents([.hour, .minute], from: $0); model.salah.jummahMinutes = (c.hour ?? 13) * 60 + (c.minute ?? 30) }),
+                                   displayedComponents: .hourAndMinute).fixedSize()
+                        Picker("Remind me", selection: Binding(get: { model.salah.jummahLead }, set: { model.salah.jummahLead = $0 })) {
+                            ForEach([15, 30, 45, 60], id: \.self) { Text("\($0) min before").tag($0) }
+                        }.fixedSize()
+                    }
+                }
+                Toggle("Surah Al-Kahf reminder Friday morning", isOn: Binding(get: { model.salah.kahfReminder }, set: { model.salah.kahfReminder = $0 }))
+                note("Times are calculated on this Mac for your location\(model.salah.place.map { " (\($0))" } ?? ""). ISNA is common in North America; match your local masjid's timetable. Set the khutbah time to your masjid's.")
             }
             group("Hover preview") {
                 Toggle("Glance: next event, exam, Anki, Claude usage and next reading", isOn: $model.previewGlance)
@@ -826,20 +920,41 @@ struct SettingsView: View {
                 note("Last 30 items, in memory only. Items marked as passwords are never recorded.")
             }
             group("Ask AI") {
-                Picker("Default", selection: $assistant.provider) { ForEach(AssistantProvider.allCases) { Text($0.title).tag($0) } }.pickerStyle(.segmented).frame(width: 220)
+                ForEach(AssistantProvider.allCases) { item in
+                    Toggle(item.title, isOn: Binding(get: { assistant.enabled.contains(item) }, set: { assistant.setEnabled(item, $0) }))
+                        .disabled(assistant.enabled == [item])
+                }
+                if assistant.enabled.count > 1 {
+                    Picker("Default", selection: $assistant.provider) { ForEach(assistant.enabled) { Text($0.title).tag($0) } }.pickerStyle(.segmented).frame(width: CGFloat(assistant.enabled.count) * 90)
+                }
                 Button("Free memory (unload chat windows)") { assistant.unload() }
-                note("Claude and ChatGPT run in their own web pages with your own sign-in. Attending never sees your password.")
+                note("Turn off any you don't use; they won't load at all. Each runs in its own web page with your own sign-in. Attending never sees your password.")
             }
             group("Agents") {
-                Text("Claude Code: \(model.claudeDetected ? "detected" : "unavailable")")
-                Text("Codex: \(model.codexDetected ? "detected · managed sessions supported" : "unavailable")")
-                note("Connect Claude using scripts/install-claude-hooks.py in the repository. Existing sessions may need to restart to load hooks.")
+                HStack {
+                    Text("Claude Code")
+                    Spacer()
+                    if ClaudeHooks.installed { Text("Connected").foregroundStyle(Theme.done) }
+                    else if ClaudeHooks.claudeInstalled { PillButton(title: "Connect", symbol: nil) { usageMessage = (try? ClaudeHooks.install()) ?? "Couldn't connect. See Settings › Help." } }
+                    else { Text("Not found").foregroundStyle(Theme.tertiary) }
+                }
+                Text("Codex and ChatGPT: \(CodexSessionWatcher.available ? "sessions detected automatically" : "not found")")
+                note("Codex sessions show up on their own, from the ChatGPT and Codex apps, the IDE extension or the CLI. Connecting Claude Code adds Attending's hooks to its settings (yours are kept, with a backup); start a new session afterward.")
             }
             group("Privacy") {
                 Button("Open local data folder") { NSWorkspace.shared.open(AppPaths.directory) }
                 Button("Clear finished session history…", role: .destructive) { confirmClear = true }
                     .confirmationDialog("Clear finished session history? Active sessions are kept.", isPresented: $confirmClear) { Button("Clear history", role: .destructive) { model.clearHistory() } }
-                note("Attending stores paths and lifecycle metadata, never transcripts or credentials. No telemetry.")
+                note("Attending stores session names, folders and status, never transcripts or credentials. No telemetry.")
+            }
+            group("Help") {
+                HStack(spacing: 8) {
+                    PillButton(title: "Report a problem", symbol: "exclamationmark.bubble") { Diagnostics.report() }
+                    PillButton(title: "Copy diagnostics", symbol: "doc.on.doc") { Diagnostics.copy() }
+                    PillButton(title: "Setup guide", symbol: "checklist") { model.onboarding.show(step: .setup) }
+                    Spacer()
+                }
+                note("Opens a GitHub issue with your Attending and macOS versions, Mac model and which permissions are on. Nothing personal; you see it before sending.")
             }
             group("Advanced") {
                 Toggle("Debug logging", isOn: $model.debugLogging)
@@ -881,5 +996,241 @@ struct MeetingChip: View {
             }
         }
         .help(event.title)
+    }
+}
+
+/// Connected calendar accounts and calendar links.
+struct CalendarsSection: View {
+    @ObservedObject var calendar: CalendarService
+    @State private var link = ""
+    @State private var adding = false
+    @State private var message: String?
+    @State private var showHelp = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Google, Outlook or school account")
+                    Text(calendar.accounts.isEmpty ? (calendar.authorized ? "No calendar accounts yet" : "Allow Calendar access first") : "Connected: " + calendar.accounts.joined(separator: ", "))
+                        .font(.system(size: 11)).foregroundStyle(calendar.accounts.isEmpty ? Theme.tertiary : Theme.done).lineLimit(2)
+                }
+                Spacer()
+                if calendar.authorized { PillButton(title: "Add account", symbol: "plus") { calendar.openInternetAccounts() } }
+                else { PillButton(title: "Allow access", symbol: nil) {
+                    if calendar.denied { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars")!) } else { calendar.requestAccess() }
+                } }
+            }
+            Text("Sign in with Google or Microsoft in Internet Accounts and turn on Calendars. Their events show here on their own, and Attending never sees your password.")
+                .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+            Divider().opacity(0.3)
+            Text("Calendar link")
+            ForEach(calendar.feeds) { feed in
+                HStack(spacing: 8) {
+                    Image(systemName: feed.problem == nil ? "calendar" : "exclamationmark.triangle.fill").foregroundStyle(feed.problem == nil ? Theme.secondary : Theme.attention)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(feed.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        Text(feed.problem ?? feed.updated.map { "Updated \($0.formatted(.relative(presentation: .named)))" } ?? "Not loaded yet")
+                            .font(.system(size: 10)).foregroundStyle(feed.problem == nil ? Theme.tertiary : Theme.attention).lineLimit(2)
+                    }
+                    Spacer()
+                    IconButton(symbol: "minus.circle", help: "Remove this calendar", size: 22) { calendar.removeFeed(feed) }
+                }
+            }
+            HStack {
+                TextField("Paste a private iCal link (https:// or webcal://)", text: $link).textFieldStyle(.roundedBorder)
+                    .onSubmit(add)
+                PillButton(title: adding ? "Adding…" : "Add", symbol: nil, prominent: true, action: add).disabled(adding || link.isEmpty)
+            }
+            if let message { Text(message).font(.system(size: 11)).foregroundStyle(Theme.attention).fixedSize(horizontal: false, vertical: true) }
+            DisclosureGroup("Where to find the link", isExpanded: $showHelp) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Google Calendar (on the web): Settings › click your calendar › Integrate calendar › Secret address in iCal format.")
+                    Text("Outlook (on the web): Settings › Calendar › Shared calendars › Publish a calendar › choose the calendar and Can view all details › copy the ICS link.")
+                    Text("School calendars: look for Subscribe, iCal or ICS.")
+                    Text("Treat the link like a password: anyone with it can see the calendar.")
+                }.font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true).padding(.top, 4)
+            }.font(.system(size: 11))
+        }
+    }
+    private func add() {
+        guard !link.isEmpty, !adding else { return }
+        adding = true; message = nil
+        Task {
+            message = await calendar.addFeed(link)
+            if message == nil { link = "" }
+            adding = false
+        }
+    }
+}
+
+struct BoardsSettings: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var exams: ExamStore
+    var body: some View {
+        Toggle("Boards countdown", isOn: $model.showExams)
+        if model.showExams {
+            Picker("Count in", selection: $exams.unit) { ForEach(BoardsMath.Unit.allCases, id: \.self) { Text($0.title).tag($0) } }.pickerStyle(.segmented).frame(width: 280)
+            Picker("Calm mode", selection: $exams.calm) { ForEach(ExamStore.Calm.allCases, id: \.self) { Text($0.title).tag($0) } }.frame(maxWidth: 320)
+            HStack {
+                Stepper("Amber at \(exams.amberDays) days", value: $exams.amberDays, in: 7...120, step: 1)
+                Stepper("Red at \(exams.redDays) days", value: $exams.redDays, in: 1...60, step: 1)
+            }
+            Toggle("Exam week mode", isOn: $model.examWeek)
+            Text("Home shows only the countdown, readings, timer, Anki and Salah, and your Focus shortcut (Automation) runs and stays on.")
+                .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+            Toggle("Show the countdown in the closed notch", isOn: $exams.pinToNotch)
+            Toggle("Milestone alerts (100, 60, 30, 14, 7, 3 and 1 days)", isOn: $exams.milestoneAlerts)
+            Toggle("Exam-day checklist the evening before", isOn: $exams.checklistReminder)
+            HStack {
+                Toggle("Bedtime nudge the two nights before", isOn: $exams.bedtimeNudge)
+                if exams.bedtimeNudge {
+                    DatePicker("", selection: Binding(
+                        get: { Calendar.current.startOfDay(for: Date()).addingTimeInterval(TimeInterval(exams.bedtimeMinutes * 60)) },
+                        set: { let c = Calendar.current.dateComponents([.hour, .minute], from: $0); exams.bedtimeMinutes = (c.hour ?? 23) * 60 + (c.minute ?? 0) }),
+                               displayedComponents: .hourAndMinute).labelsHidden().fixedSize()
+                }
+            }
+            Text("Add exams in the Study tab. Level 1 and Step 1 are pass/fail, so they never ask for a target score. Calm mode shows weeks only, or hides the countdown until 30 days out.")
+                .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+struct AutoQuitSettings: View {
+    @ObservedObject var autoQuit: AutoQuit
+    var body: some View {
+        Toggle("Quit apps when their last window closes", isOn: $autoQuit.enabled)
+        if autoQuit.enabled {
+            if !autoQuit.trusted {
+                HStack {
+                    Text("Needs Accessibility to see windows close.").font(.system(size: 11)).foregroundStyle(Theme.attention)
+                    Spacer()
+                    PillButton(title: "Grant access", symbol: nil) { autoQuit.requestAccess() }
+                }
+            }
+            HStack {
+                Text("Never quit")
+                Spacer()
+                PillButton(title: "Add app", symbol: "plus") { autoQuit.pickApps() }
+            }
+            ForEach(autoQuit.excluded, id: \.self) { id in
+                HStack(spacing: 8) {
+                    if let icon = AutoQuit.icon(for: id) { Image(nsImage: icon).resizable().frame(width: 18, height: 18) }
+                    Text(AutoQuit.name(for: id)).font(.system(size: 12))
+                    Spacer()
+                    IconButton(symbol: "minus.circle", help: "Allow quitting", size: 20) { autoQuit.include(id) }
+                }
+            }
+        }
+        Text("Like Swift Quit: closing an app's last window quits it, the normal way, so unsaved work still asks first. Attending, Finder and menu bar utilities like DockDoor are never quit, and apps with windows on another desktop or minimized stay open.")
+            .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+            .onAppear { autoQuit.refreshTrust() }
+    }
+}
+
+/// When the island gets out of the way.
+struct StepAsideSettings: View {
+    @ObservedObject var stepAside: StepAside
+    var body: some View {
+        Toggle("Hide when something is full screen", isOn: $stepAside.inFullscreen)
+        Toggle("Hide while using these apps", isOn: $stepAside.whileUsing)
+        if stepAside.whileUsing {
+            ForEach(stepAside.installedApps, id: \.self) { id in
+                HStack(spacing: 8) {
+                    if let icon = AutoQuit.icon(for: id) { Image(nsImage: icon).resizable().frame(width: 18, height: 18) }
+                    Text(AutoQuit.name(for: id)).font(.system(size: 12))
+                    Spacer()
+                    IconButton(symbol: "minus.circle", help: "Show over this app", size: 20) { stepAside.remove(id) }
+                }
+            }
+            HStack {
+                Spacer()
+                PillButton(title: "Add app", symbol: "plus") { stepAside.pickApps() }
+            }
+        }
+        Text("For videos, slideshows and editors like DaVinci Resolve that use the top of the screen. Alerts wait until it's back, and the menu bar icon still opens it.")
+            .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// The coffee cup: keeps the Mac (and screen) awake. Click toggles; right-click picks a time.
+struct KeepAwakeButton: View {
+    @ObservedObject var keepAwake: KeepAwake
+    var body: some View {
+        IconButton(symbol: keepAwake.manual ? "cup.and.saucer.fill" : "cup.and.saucer", help: help, tint: keepAwake.manual ? Theme.attention : Theme.secondary) { keepAwake.toggle() }
+            .contextMenu {
+                ForEach([30, 60, 120, 240], id: \.self) { minutes in
+                    Button(minutes < 60 ? "\(minutes) minutes" : "\(minutes / 60) hour\(minutes == 60 ? "" : "s")") { keepAwake.set(minutes: minutes) }
+                }
+                Button("Until I turn it off") { keepAwake.set(minutes: nil) }
+                if keepAwake.manual { Button("Turn off") { keepAwake.set(minutes: nil, on: false) } }
+            }
+    }
+    private var help: String {
+        guard let until = keepAwake.manualUntil, keepAwake.manual else { return keepAwake.agentsWorking && keepAwake.withAgents ? "Awake while agents work · click to keep the screen on" : "Keep awake" }
+        return until == .distantFuture ? "Keeping awake until turned off" : "Keeping awake until \(until.formatted(date: .omitted, time: .shortened))"
+    }
+}
+
+struct SnappingSettings: View {
+    @ObservedObject var snapper: WindowSnapper
+    var body: some View {
+        Toggle("Snap windows with ⌃⌥ shortcuts", isOn: $snapper.enabled)
+        if snapper.enabled {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), alignment: .leading)], alignment: .leading, spacing: 4) {
+                ForEach(WindowSnapper.Region.allCases, id: \.self) { region in
+                    HStack(spacing: 6) {
+                        Text("⌃⌥\(region.key.label)").font(.system(size: 11, weight: .semibold, design: .rounded)).foregroundStyle(snapper.taken.contains(region) ? Theme.tertiary : Theme.primary).frame(width: 38, alignment: .leading)
+                        Text(region.title).font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                    }
+                }
+            }
+            if !snapper.taken.isEmpty {
+                Text("Some shortcuts are already used by another app (Rectangle?), so those stay with it.").font(.system(size: 11)).foregroundStyle(Theme.attention)
+            }
+            if !AXIsProcessTrusted() {
+                Text("Moving other apps' windows needs Accessibility: System Settings › Privacy & Security › Accessibility › Attending.").font(.system(size: 11)).foregroundStyle(Theme.attention).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// Which tabs show in the header and in what order. Home and Settings always show.
+struct TabsSettings: View {
+    @ObservedObject var model: AppModel
+    var body: some View {
+        let shown = model.headerTabs
+        let hidden = AppModel.choosableTabs.filter { !shown.contains($0) }
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(shown.enumerated()), id: \.element) { index, tab in
+                row(tab, on: true) {
+                    IconButton(symbol: "chevron.up", help: "Move left", size: 20) { move(tab, by: -1) }.disabled(index == 0)
+                    IconButton(symbol: "chevron.down", help: "Move right", size: 20) { move(tab, by: 1) }.disabled(index == shown.count - 1)
+                }
+            }
+            ForEach(hidden, id: \.self) { tab in row(tab, on: false) { EmptyView() } }
+        }
+        Text("Home and Settings always show; ⌘1–9 follow this order. With Agents off, Claude's questions and approvals appear on Home, and agent alerts still drop down.")
+            .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
+    }
+    private func row<Buttons: View>(_ tab: Tab, on: Bool, @ViewBuilder buttons: () -> Buttons) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: tab.symbol).frame(width: 18).foregroundStyle(on ? Theme.primary : Theme.tertiary)
+            Text(tab == .mirror ? "Camera" : tab.title).foregroundStyle(on ? Theme.primary : Theme.secondary)
+            Spacer()
+            buttons()
+            Toggle("", isOn: Binding(get: { on }, set: { value in
+                var tabs = model.headerTabs
+                if value { tabs.append(tab) } else { tabs.removeAll { $0 == tab } }
+                model.headerTabs = tabs
+            })).labelsHidden().toggleStyle(.switch).controlSize(.mini).tint(Theme.done)
+        }
+        .font(.system(size: 12))
+    }
+    private func move(_ tab: Tab, by offset: Int) {
+        var tabs = model.headerTabs
+        guard let index = tabs.firstIndex(of: tab), tabs.indices.contains(index + offset) else { return }
+        tabs.swapAt(index, index + offset)
+        model.headerTabs = tabs
     }
 }

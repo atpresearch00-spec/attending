@@ -74,12 +74,13 @@ def write_frame(connection, value):
 
 
 class ApprovalFixture:
-    def __init__(self, root, decision="allowOnce", corrupt_token=False, delay=0):
+    def __init__(self, root, decision="allowOnce", corrupt_token=False, delay=0, answers=None):
         self.run_directory = Path(root) / "run"
         self.run_directory.mkdir(mode=0o700)
         os.chmod(self.run_directory, 0o700)
         self.path = self.run_directory / "approval.sock"
         self.decision = decision
+        self.answers = answers
         self.corrupt_token = corrupt_token
         self.delay = delay
         self.envelope = None
@@ -114,11 +115,14 @@ class ApprovalFixture:
                 if self.corrupt_token:
                     token = "0" * len(token)
                 try:
-                    write_frame(connection, {
+                    response = {
                         "requestID": self.envelope["request"]["id"],
                         "token": token,
                         "decision": self.decision,
-                    })
+                    }
+                    if self.answers is not None:
+                        response["answers"] = self.answers
+                    write_frame(connection, response)
                 except BrokenPipeError:
                     if not self.delay:
                         raise
@@ -171,6 +175,34 @@ def test_allow_once_and_full_input():
         assert_sanitized_event(root)
 
 
+def question_payload():
+    payload = hook_payload()
+    payload["tool_name"] = "AskUserQuestion"
+    payload["tool_input"] = {"questions": [{
+        "question": "Which format?", "header": "Format", "multiSelect": False,
+        "options": [{"label": "Summary", "description": "Brief"}, {"label": "Detailed", "description": "Full"}],
+    }]}
+    return payload
+
+
+def test_question_answers_and_pass_through():
+    with temporary_root() as root:
+        payload = question_payload()
+        with ApprovalFixture(root, decision="allowOnce", answers={"Which format?": "Detailed"}):
+            result = run_bridge(root, payload, "--approval-wait=1")
+        decision = json.loads(result.stdout)["hookSpecificOutput"]["decision"]
+        assert decision == {"behavior": "allow", "updatedInput": {**payload["tool_input"], "answers": {"Which format?": "Detailed"}}}
+    with temporary_root() as root:
+        # Allow without answers would leave the question blank, so Claude asks instead.
+        with ApprovalFixture(root, decision="allowOnce"):
+            result = run_bridge(root, question_payload(), "--approval-wait=1")
+        assert result.stdout == b""
+    with temporary_root() as root:
+        with ApprovalFixture(root, decision="askInProvider"):
+            result = run_bridge(root, hook_payload(), "--approval-wait=1")
+        assert result.stdout == b""
+
+
 def test_deny():
     with temporary_root() as root:
         with ApprovalFixture(root, decision="deny"):
@@ -210,6 +242,7 @@ def main():
         test_observation_unchanged,
         test_absent_app_returns_immediately,
         test_allow_once_and_full_input,
+        test_question_answers_and_pass_through,
         test_deny,
         test_mismatched_response_falls_back,
         test_timeout_falls_back,
