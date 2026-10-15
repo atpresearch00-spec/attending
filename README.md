@@ -69,6 +69,10 @@ Everything is optional and can be turned off in Settings.
 
 ## Install
 
+**Personal fork:** this branch contains the Bhagavad Gita replacement. Build it
+from source using the instructions below; the original project’s installers do
+not contain this change. No installer for this fork has been published yet.
+
 **Requirements:** a Mac with Apple silicon (M1 or newer) and macOS 14.2 or later. A notch is best, but it also works below the menu bar on other displays. Download it on your Mac, not your phone.
 
 ### Download
@@ -98,15 +102,19 @@ Attending then welcomes you and walks through the permissions it uses, one butto
 You need Xcode, or just the Command Line Tools (`xcode-select --install`).
 
 ```sh
-git clone https://github.com/med-abdullah/attending.git
+git clone https://github.com/atpresearch00-spec/attending.git
 cd attending
 ./scripts/create-signing-identity.sh   # optional: keeps macOS permissions across updates
-./scripts/build-app.sh release
+BUNDLE_ID=app.atpresearch.Attending ./scripts/build-app.sh release
 ./scripts/install-app.sh               # copies to /Applications
 open /Applications/Attending.app
 ```
 
-To use your own bundle ID or signing identity, copy `scripts/local.env.example` to `scripts/local.env` and edit it.
+The personal bundle ID above disables the original project’s automatic updates,
+so an upstream release cannot replace this fork. It also uses a separate macOS
+preferences domain.
+
+To use another bundle ID or signing identity, copy `scripts/local.env.example` to `scripts/local.env` and edit it.
 
 ## Setup (all optional)
 
