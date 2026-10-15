@@ -33,6 +33,8 @@ jobs:
           persist-credentials: false
       - name: Core checks
         run: swift run --disable-sandbox AttendingCoreChecks
+      - name: Build bridge helper for integration checks
+        run: swift build --disable-sandbox --product attending-bridge
       - name: Bridge and settings checks
         run: python3 scripts/test-bridge.py
       - name: Approval checks
@@ -50,4 +52,8 @@ jobs:
           gh release create "v$RELEASE_VERSION" dist/* \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Attending $RELEASE_VERSION — Bhagavad Gita edition" \
-            --notes-file docs/personal-release-notes.md --latest
+            --notes-file docs/personal-release-notes.md --draft
+          verify_dir=$(mktemp -d)
+          gh release download "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --dir "$verify_dir"
+          (cd "$verify_dir" && shasum -a 256 -c SHA256SUMS.txt)
+          gh release edit "v$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --draft=false --latest
