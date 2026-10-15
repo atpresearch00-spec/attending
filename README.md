@@ -69,15 +69,17 @@ Everything is optional and can be turned off in Settings.
 
 ## Install
 
-**Personal fork:** this branch contains the Bhagavad Gita replacement. Build it
-from source using the instructions below; the original project’s installers do
-not contain this change. No installer for this fork has been published yet.
+**Personal fork:** this branch contains the Bhagavad Gita replacement. Download
+the personal installer from [this fork’s Releases](https://github.com/atpresearch00-spec/attending/releases/latest).
+The original project’s installers do not contain this change. The personal build
+uses separate preferences and permissions, disables upstream automatic updates,
+and must be updated manually. It is ad-hoc signed and not notarized by Apple.
 
 **Requirements:** a Mac with Apple silicon (M1 or newer) and macOS 14.2 or later. A notch is best, but it also works below the menu bar on other displays. Download it on your Mac, not your phone.
 
 ### Download
 
-1. Download `Attending-x.y.z.dmg` from [the latest release](../../releases/latest) (under **Assets**) and open it.
+1. Download `Attending-1.1.0-gita.1.dmg` from [the latest release](../../releases/latest) (under **Assets**) and open it.
 2. Drag **Attending** onto the **Applications** folder beside it.
 
 ### Open it the first time
@@ -95,7 +97,7 @@ Attending then welcomes you and walks through the permissions it uses, one butto
 
 **Still stuck?** [Report an install problem](../../issues/new?template=install-problem.yml) with your macOS version and a screenshot. Once it's running, **Settings › Help › Report a problem** fills in your versions and permissions for you.
 
-**Updates are automatic.** Attending checks for new releases about once a day and tells you in the notch. Click **Update**, and it downloads, verifies and installs the new version, then relaunches. You can also check in Settings › Updates.
+**Personal builds update manually.** Download the newest installer from this fork’s Releases, quit Attending, and replace the app in Applications. Upstream automatic updates are disabled so they cannot replace the Bhagavad Gita edition.
 
 ### Build from source
 
