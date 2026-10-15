@@ -885,7 +885,7 @@ struct SettingsView: View {
             }
             group("Bhagavad Gita") {
                 Toggle("Daily Bhagavad Gita reflections", isOn: Binding(get: { model.gitaEnabled }, set: { model.setGita($0) }))
-                note("A new reflection each day, available offline on Home and in Exam week. Browse with Next, return to Today, copy a reflection, or open its verse for the full context. English paraphrases are labeled with chapter and verse.")
+                note("A new reflection each day, available offline on Home and in Exam week. Browse with Next, return to Today, copy a reflection, or open the translation for the full context. Quoted excerpts include chapter, verse and translator attribution.")
             }
             group("Hover preview") {
                 Toggle("Glance: next event, exam, Anki, Claude usage and next reading", isOn: $model.previewGlance)
