@@ -82,10 +82,19 @@ Everything is optional and can be turned off in Settings.
 
 1. Download `Attending-x.y.z.dmg` from [the latest release](../../releases/latest) (under **Assets**) and open it.
 2. Drag **Attending** onto the **Applications** folder beside it.
-3. Open Attending from Applications. The first time, macOS says it can't verify the developer, because the app isn't notarized by Apple yet. Click **Done** (not Move to Trash).
-4. Open **System Settings › Privacy & Security**, scroll to the bottom, and click **Open Anyway** next to "Attending was blocked". Enter your password and click **Open**.
 
-Attending then welcomes you and walks through the permissions it uses, one button each. You only do this once. If **Open Anyway** isn't there, open Attending again and go straight back to Privacy & Security: the button only shows for a while after a blocked launch. If you opened it from Downloads instead, Attending offers to move itself to Applications, where it can update itself.
+### Open it the first time
+
+Attending isn't notarized by Apple yet, so macOS blocks it the first time with a message that it can't verify the developer. To allow it (you only do this once):
+
+1. Open Attending from Applications, then click **Done** or **Cancel** on the warning. Don't click Move to Trash.
+2. Open the Apple menu () and select **System Settings** (or **System Preferences**).
+3. Click **Privacy & Security** in the sidebar.
+4. Scroll down to the **Security** section.
+5. Find the message saying Attending was blocked, then click **Open Anyway**.
+6. Enter your Mac password or use Touch ID to confirm, then click **Open**.
+
+Attending then welcomes you and walks through the permissions it uses, one button each. If **Open Anyway** isn't there, open Attending again and go straight back to Privacy & Security: the button only shows for a while after a blocked launch. If you opened it from Downloads instead, Attending offers to move itself to Applications, where it can update itself.
 
 **Still stuck?** [Report an install problem](../../issues/new?template=install-problem.yml) with your macOS version and a screenshot. Once it's running, **Settings › Help › Report a problem** fills in your versions and permissions for you.
 
