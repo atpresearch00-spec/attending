@@ -1,0 +1,20 @@
+Attending — Bhagavad Gita edition
+
+Requires an Apple silicon Mac (M1 or newer) with macOS 14.2 or later.
+
+1. Quit any running copy of Attending.
+2. Drag Attending.app onto the Applications shortcut.
+3. Open Attending from Applications.
+
+This personal build is ad-hoc signed and is not notarized by Apple. If macOS
+blocks opening it, open System Settings > Privacy & Security, find the Attending
+message, choose Open Anyway, and confirm. Only do this for the download from:
+https://github.com/atpresearch00-spec/attending/releases
+
+The prayer feature has been replaced by offline Bhagavad Gita quotations.
+It uses a personal bundle identifier, so preferences and macOS permissions are
+separate from the original app. Upstream automatic updates are disabled to
+preserve the custom feature. Future versions must be installed manually.
+
+This is a personal fork of Attending by Abdullah Shahul Hameed. The app's MIT
+license is included in this disk image and in the app's Resources folder.

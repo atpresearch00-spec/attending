@@ -1,0 +1,53 @@
+name: Build and publish Gita installer
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/personal-release.yml]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: New personal release version (existing releases are never overwritten)
+        required: true
+        default: 1.1.0-gita.1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-release-${{ inputs.version || '1.1.0-gita.1' }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.repository == 'atpresearch00-spec/attending' && github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version || '1.1.0-gita.1' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Core checks
+        run: swift run --disable-sandbox AttendingCoreChecks
+      - name: Bridge and settings checks
+        run: python3 scripts/test-bridge.py
+      - name: Approval checks
+        run: python3 scripts/test-approvals.py
+      - name: Fake Codex transport checks
+        run: |
+          swiftc -parse-as-library Sources/AttendingCore/Models.swift Sources/AttendingCore/CodexTransport.swift scripts/fixtures/CodexTransportHarness.swift -o "$RUNNER_TEMP/codex-transport-checks"
+          "$RUNNER_TEMP/codex-transport-checks" "$GITHUB_WORKSPACE/scripts/fixtures/fake-codex-app-server.py"
+      - name: Build, package and verify personal installer
+        run: bash scripts/package-personal.sh "$RELEASE_VERSION"
+      - name: Publish verified downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$RELEASE_VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Attending $RELEASE_VERSION — Bhagavad Gita edition" \
+            --notes-file docs/personal-release-notes.md --latest
