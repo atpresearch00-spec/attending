@@ -82,14 +82,16 @@ struct GitaCard: View {
                     .foregroundStyle(Theme.primary)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
-                Text("\(gita.quote.reference) · Paraphrase")
+                Text("\(gita.quote.reference) · Excerpt")
                     .font(.system(size: 10)).foregroundStyle(Theme.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                Text("Translated by Edwin Arnold")
+                    .font(.system(size: 10)).foregroundStyle(Theme.tertiary)
                 HStack(spacing: 6) {
                     IconButton(symbol: "doc.on.doc", help: "Copy reflection with its reference", size: 22) { gita.copy() }
                     Link(destination: gita.quote.sourceURL) {
                         Image(systemName: "arrow.up.right.square").font(.system(size: 12))
-                    }.help("Read the verse and its context").foregroundStyle(Theme.secondary)
+                    }.help("Read the translation and its context").foregroundStyle(Theme.secondary)
                     Spacer(minLength: 0)
                     if !gita.isToday {
                         Button("Today") { gita.today() }.buttonStyle(.plain)

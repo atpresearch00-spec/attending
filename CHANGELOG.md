@@ -3,7 +3,7 @@
 ## Unreleased — personal fork
 
 - Replace the prayer tracker, prayer alerts and related settings with offline daily Bhagavad Gita reflections.
-- Show chapter-and-verse references, clearly labeled English paraphrases, Next/Today controls, copy and source links.
+- Show chapter-and-verse references, attributed excerpts from Edwin Arnold’s public-domain translation, Next/Today controls, copy and source links.
 - Rotate at local midnight and refresh after wake or clock/time-zone changes; location is now used only for optional weather.
 
 

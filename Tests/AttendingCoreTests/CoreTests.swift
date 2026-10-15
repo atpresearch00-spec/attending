@@ -133,8 +133,7 @@ func XCTFail(_ message: String, file: StaticString = #file, line: UInt = #line) 
         do { _ = try await store.load(); XCTFail("Accepted an unsupported schema") } catch StorageError.unsupportedVersion(99) { }
     }
 
-    /// Reference times from api.aladhan.com for the same places, dates and methods.
-    /// Allows one minute for rounding differences.
+    /// Calendar time zones, recurrence and cancellation handling.
     func testCalendarFeeds() {
         let ics = """
         BEGIN:VCALENDAR\r
@@ -259,14 +258,14 @@ func XCTFail(_ message: String, file: StaticString = #file, line: UInt = #line) 
         XCTAssertEqual(GitaQuotes.daily(on: instant, calendar: tokyo).id, "2.48")
     }
     func testGitaCatalog() {
-        XCTAssertEqual(GitaQuotes.all.map(\.id), ["2.47", "2.48", "4.39", "6.5", "6.17", "6.26", "12.13-14", "17.15"])
+        XCTAssertEqual(GitaQuotes.all.map(\.id), ["2.47", "2.48", "4.39", "6.5", "6.17", "6.26", "12.13", "17.15"])
         XCTAssertEqual(Set(GitaQuotes.all.map(\.id)).count, GitaQuotes.all.count)
         for quote in GitaQuotes.all {
             XCTAssertTrue(!quote.text.isEmpty)
             XCTAssertEqual(quote.sourceURL.scheme, "https")
-            XCTAssertEqual(quote.sourceURL.host, "www.holy-bhagavad-gita.org")
-            XCTAssertEqual(quote.sourceURL.absoluteString, "https://www.holy-bhagavad-gita.org/chapter/\(quote.chapter)/verse/\(quote.verse)/")
-            XCTAssertTrue(quote.copyText.contains(quote.reference) && quote.copyText.contains("(paraphrase)"))
+            XCTAssertEqual(quote.sourceURL.host, "www.gutenberg.org")
+            XCTAssertEqual(quote.sourceURL.fragment, String(format: "chap%02d", quote.chapter))
+            XCTAssertTrue(quote.copyText.contains(quote.reference) && quote.copyText.contains(GitaQuote.translation) && quote.copyText.contains("(excerpt)"))
         }
     }
     func testCodexRolloutsAndSessionNames() {

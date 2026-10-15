@@ -7,31 +7,32 @@ both normal Home and Exam week; the hover chip opens Home.
 One reflection is selected for each local civil date. It changes at midnight,
 including on daylight-saving days, and refreshes after wake and system clock or
 time-zone changes. Next browses the collection; Today restores the daily selection.
-Copy includes both the reference and the word “paraphrase.” Read verse opens the
-corresponding source page in the default browser.
+Copy includes the reference, excerpt label and translator attribution. The source
+button opens the corresponding chapter of the translation in the default browser.
 
 ## Wording and references
 
-The eight English texts in `GitaQuotes.swift` are original short paraphrases of
-the verses, not verbatim quotations from a named modern translation. The card
-labels them accordingly. They are not a substitute for the complete verses or
-their devotional/philosophical context. In particular, the reflections retain
-the spiritual context of yoga, the Divine and devotion rather than presenting
-the work as only productivity advice.
+The eight quotations are excerpts from Edwin Arnold's *The Song Celestial*, first
+published in 1885. This is a public-domain English verse translation of the
+Bhagavad Gita. Text, punctuation and poetic line breaks follow the linked edition;
+these are short excerpts, not necessarily complete verses. The card and copied
+text identify the translator and label each selection as an excerpt.
 
-References were checked against the verse text/translation published by Swami
-Mukundananda. That edition's translation and commentary remain its publisher's
-copyright; they are not bundled in this app. Each source link provides the full
-verse and commentary:
+The [source edition](https://www.gutenberg.org/ebooks/2388) identifies Edwin Arnold
+as translator and lists the work as public domain in the USA. Each card links to
+the relevant chapter of its full text. Verse references identify the corresponding
+Sanskrit passages; Arnold's poetic rendering does not print verse numbers.
 
-- [2.47 — Action and its fruits](https://www.holy-bhagavad-gita.org/chapter/2/verse/47/)
-- [2.48 — Evenness in success and failure](https://www.holy-bhagavad-gita.org/chapter/2/verse/48/)
-- [4.39 — Faith, discipline, wisdom and peace](https://www.holy-bhagavad-gita.org/chapter/4/verse/39/)
-- [6.5 — The mind as ally or adversary](https://www.holy-bhagavad-gita.org/chapter/6/verse/5/)
-- [6.17 — Moderation and yoga](https://www.holy-bhagavad-gita.org/chapter/6/verse/17/)
-- [6.26 — Returning the wandering mind](https://www.holy-bhagavad-gita.org/chapter/6/verse/26/)
-- [12.13–14 — Compassion and devotion](https://www.holy-bhagavad-gita.org/chapter/12/verse/13-14/)
-- [17.15 — Discipline of speech](https://www.holy-bhagavad-gita.org/chapter/17/verse/15/)
+| Reference | Subject | Translation chapter |
+| --- | --- | --- |
+| 2.47 | Action and its fruits | [II](https://www.gutenberg.org/cache/epub/2388/pg2388-images.html#chap02) |
+| 2.48 | Action as spiritual practice | [II](https://www.gutenberg.org/cache/epub/2388/pg2388-images.html#chap02) |
+| 4.39 | Faith, knowledge and peace | [IV](https://www.gutenberg.org/cache/epub/2388/pg2388-images.html#chap04) |
+| 6.5 | The Self as friend or foe | [VI](https://www.gutenberg.org/cache/epub/2388/pg2388-images.html#chap06) |
+| 6.17 | Moderation | [VI](https://www.gutenberg.org/cache/epub/2388/pg2388-images.html#chap06) |
+| 6.26 | Returning the wandering mind | [VI](https://www.gutenberg.org/cache/epub/2388/pg2388-images.html#chap06) |
+| 12.13 | Compassion and freedom from ego | [XII](https://www.gutenberg.org/cache/epub/2388/pg2388-images.html#chap12) |
+| 17.15 | Discipline of speech | [XVII](https://www.gutenberg.org/cache/epub/2388/pg2388-images.html#chap17) |
 
 ## Removed behavior
 

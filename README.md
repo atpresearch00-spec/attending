@@ -37,9 +37,9 @@ Hover the notch for a glance at your day. Click it to open everything else.
 
 ### 📖 Bhagavad Gita
 - **Daily reflection** on Home, including Exam week mode, with a compact verse-reference shortcut in the hover preview.
-- Eight offline English paraphrases rotate at local midnight, with chapter-and-verse references. Each is clearly labeled as a paraphrase, rather than a verbatim translation.
+- Eight offline quotations from Edwin Arnold’s public-domain translation rotate at local midnight, with chapter-and-verse references and translator attribution. They are labeled as excerpts.
 - Browse the next reflection, return to today's selection, or copy the text with its reference.
-- Open the linked verse for the Sanskrit, translation and context. Only opening that link needs a network connection; reflections need no account or location access.
+- Open the linked translation to read the full chapter and context. Only opening that link needs a network connection; reflections need no account or location access.
 - Turn the feature on or off in Settings › Bhagavad Gita.
 
 ### 🎵 Music
