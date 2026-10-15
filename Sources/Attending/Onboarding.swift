@@ -251,7 +251,7 @@ struct SetupList: View {
                               status: onboarding.accessibilityStatus, button: "Open Settings", action: onboarding.allowAccessibility)
                 PermissionRow(symbol: "calendar", title: "Calendar", detail: "Your next class, countdowns and reminders before each one",
                               status: onboarding.calendarStatus, button: onboarding.calendar == .notDetermined ? "Allow" : "Open Settings", action: onboarding.allowCalendar)
-                PermissionRow(symbol: "location", title: "Location", detail: "Weather and prayer times for where you are",
+                PermissionRow(symbol: "location", title: "Location", detail: "Optional local weather",
                               status: onboarding.locationStatus, button: onboarding.location == .notDetermined ? "Allow" : "Open Settings", action: onboarding.allowLocation)
                 if ClaudeHooks.claudeInstalled || onboarding.claude {
                     PermissionRow(symbol: "terminal", title: "Claude Code", detail: onboarding.claudeNote ?? "Optional · agent alerts, questions and approvals in the notch",

@@ -88,7 +88,7 @@ struct NotchAlert: Identifiable, Equatable {
     /// The event-title override from a capture flag, kept while Clean screen changes titles.
     private var savedTitleOverride: String??
     let sheets = SheetTracker()
-    let salah = SalahTracker()
+    let gita = GitaReflections()
     let updater = Updater()
     let downloads = DownloadStats()
     let drives = VolumeMonitor()
@@ -151,8 +151,7 @@ struct NotchAlert: Identifiable, Equatable {
     @AppStorage("screenshotDrops") var screenshotDrops = true
     @AppStorage("liveActivities") var liveActivities = true
     @AppStorage("previewGlance") var previewGlance = true
-    @AppStorage("salahEnabled") var salahEnabled = true
-    @AppStorage("salahAlerts") var salahAlerts = true
+    @AppStorage("gitaEnabled") var gitaEnabled = true
     /// Height Home's content needs; every tab shares it so switching never resizes.
     @Published var homeHeight: CGFloat = 540
     @AppStorage("focusStartShortcut") var focusStartShortcut = ""
@@ -220,7 +219,7 @@ struct NotchAlert: Identifiable, Equatable {
         volume.start()
         if calendarEnabled { calendar.start(requestIfNeeded: true) }
         if weatherEnabled { weather.start() }
-        if salahEnabled { salah.start() }
+        if gitaEnabled { gita.start() }
         mirror.onPhoto = { [weak self] url in self?.shelf.add([url]) }
         mirror.onRunning = { [weak self] running in self?.meeting.ownCameraActive = running }
         updater.onAvailable = { [weak self] release in
@@ -238,24 +237,6 @@ struct NotchAlert: Identifiable, Equatable {
         }
         airDropSender.onFailed = { [weak self] message in
             self?.raise(NotchAlert(title: "AirDrop didn't send", subtitle: message, symbol: "exclamationmark.triangle.fill", color: Theme.attention, target: .shelf), sound: "Basso")
-        }
-        salah.onPrayerTime = { [weak self] prayer, time in
-            guard let self, salahAlerts else { return }
-            raise(NotchAlert(title: "Time for \(prayer.title)", subtitle: "\(time.formatted(date: .omitted, time: .shortened))\(salah.place.map { " in \($0)" } ?? "")", symbol: "moon.stars.fill", color: Theme.done, target: .home,
-                             actionTitle: "Prayed", action: { [weak self] in self?.salah.toggle(prayer); self?.alert = nil }), sound: "Glass")
-        }
-        salah.onEndingSoon = { [weak self] prayer, end in
-            guard let self, salahAlerts else { return }
-            raise(NotchAlert(title: "\(prayer.title) ends in 15 minutes", subtitle: "Until \(end.formatted(date: .omitted, time: .shortened))", symbol: "hourglass", color: Theme.attention, target: .home,
-                             actionTitle: "Prayed", action: { [weak self] in self?.salah.toggle(prayer); self?.alert = nil }), sound: "Tink")
-        }
-        salah.onJummah = { [weak self] khutbah in
-            guard let self, salahAlerts else { return }
-            raise(NotchAlert(title: "Jummah at \(khutbah.formatted(date: .omitted, time: .shortened))", subtitle: "Jummah Mubarak. Time to head to the masjid.", symbol: "building.columns.fill", color: Theme.done, target: .home), sound: "Glass")
-        }
-        salah.onKahf = { [weak self] in
-            guard let self, salahAlerts else { return }
-            raise(NotchAlert(title: "Jummah Mubarak", subtitle: "A reminder to read Surah Al-Kahf today", symbol: "book.closed.fill", color: Theme.done, target: .home), sound: "Glass")
         }
         exams.onMilestone = { [weak self] exam, days in
             guard let self, showExams, exams.visible(exam) else { return }
@@ -635,6 +616,7 @@ struct NotchAlert: Identifiable, Equatable {
     }
     func shutdown() async {
         cleanScreen.set(false)
+        gita.stop()
         media.stop()
         activities.stop()
         mediaKeys.stop()
@@ -783,9 +765,9 @@ struct NotchAlert: Identifiable, Equatable {
         weatherEnabled = enabled
         if enabled { weather.start() } else { weather.stop() }
     }
-    func setSalah(_ enabled: Bool) {
-        salahEnabled = enabled
-        if enabled { salah.start() } else { salah.stop() }
+    func setGita(_ enabled: Bool) {
+        gitaEnabled = enabled
+        if enabled { gita.start() } else { gita.stop() }
     }
     func setClipboard(_ enabled: Bool) {
         clipboardEnabled = enabled
@@ -990,7 +972,7 @@ struct NotchAlert: Identifiable, Equatable {
                 height += CGFloat(glance)
                 if timer.isActive { height += 40 }
             }
-            // Each side of the notch fits about 130 pt: the prayer chip and chevron on the right.
+            // Each side of the notch fits about 130 pt: the reflection chip and chevron on the right.
             return CGSize(width: max(glanceTiles >= 4 ? 480 : 440, notchWidth + 320), height: band + height)
         case .expanded:
             // One height for every tab, sized to Home's content: switching tabs never

@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Your MacBook's notch, turned into a med school command center.</b><br>
-  Board countdowns, readings, Anki, prayer times, music, AI and your coding agents,<br>
+  Board countdowns, readings, Anki, Bhagavad Gita reflections, music, AI and your coding agents,<br>
   one hover away. Native, private and fast.
 </p>
 
@@ -15,17 +15,11 @@
   <a href="https://buymeacoffee.com/med.abdullah">Buy me a coffee ☕</a>
 </p>
 
-<p align="center">
-  <img src="docs/images/glance.png" width="560" alt="Hovering the notch shows the day at a glance">
-</p>
-
 ---
 
 ## What it does
 
 Hover the notch for a glance at your day. Click it to open everything else.
-
-<img src="docs/images/home.png" width="680" alt="Home: tracker, Anki, Claude usage, weather, calendar, Salah and focus timer">
 
 ### 📚 Study
 - **Boards countdown.** COMLEX, USMLE, shelf and block exams with presets, a dedicated period and days off. Count in days, weeks or study days (hours and minutes on exam day), with urgency colors and a calm mode. Your question bank's daily pace ("41 questions today"), practice exams with a score trend, milestone drop-downs, an exam-day checklist, good luck on exam morning, and a countdown card to share. Pin it to the closed notch.
@@ -41,13 +35,12 @@ Hover the notch for a glance at your day. Click it to open everything else.
 
 <img src="docs/images/study.png" width="680" alt="Study: reading tracker with today's goal">
 
-### 🕌 Salah
-- Prayer times for your location, calculated on your Mac (ISNA, MWL, Egyptian, Karachi or Umm al-Qura, with Standard or Hanafi Asr).
-- Tap a prayer to mark it prayed, and keep a streak of days with all five.
-- The notch drops down at each prayer time, and 15 minutes before one ends if you haven't prayed.
-- A Jummah reminder before your masjid's khutbah, an optional Surah Al-Kahf reminder, the Hijri date and the Qibla direction.
-
-<img src="docs/images/salah-alert.png" width="480" alt="Time for Asr alert with a Prayed button">
+### 📖 Bhagavad Gita
+- **Daily reflection** on Home, including Exam week mode, with a compact verse-reference shortcut in the hover preview.
+- Eight offline English paraphrases rotate at local midnight, with chapter-and-verse references. Each is clearly labeled as a paraphrase, rather than a verbatim translation.
+- Browse the next reflection, return to today's selection, or copy the text with its reference.
+- Open the linked verse for the Sanskrit, translation and context. Only opening that link needs a network connection; reflections need no account or location access.
+- Turn the feature on or off in Settings › Bhagavad Gita.
 
 ### 🎵 Music
 - Now Playing for Spotify, Apple Music, YouTube and anything else playing, with a live audio visualizer in the notch.
@@ -119,7 +112,8 @@ To use your own bundle ID or signing identity, copy `scripts/local.env.example` 
 
 | Feature | What to do |
 |---|---|
-| Calendar, weather, prayer times | Allow Calendar and Location when asked. |
+| Calendar and weather | Allow Calendar for events; Location is only needed for optional weather. |
+| Bhagavad Gita | Available offline; no permission or setup needed. |
 | Volume and brightness in the notch | Settings › Volume & brightness › Grant access (Accessibility). |
 | Reading tracker | Study › Trackers. Follow the steps to deploy a small Google Apps Script in your own account. Attending never sees your Google password. |
 | Anki | Install the [AnkiConnect](https://ankiweb.net/shared/info/2055492159) add-on. |

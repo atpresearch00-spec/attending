@@ -39,8 +39,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <key>NSHighResolutionCapable</key><true/>
 <key>NSCalendarsFullAccessUsageDescription</key><string>Attending shows your next event in the notch. Events never leave this Mac.</string>
 <key>NSCameraUsageDescription</key><string>Attending shows a camera mirror in the notch only while you have it open.</string>
-<key>NSLocationUsageDescription</key><string>Attending uses your approximate location for the weather and prayer times.</string>
-<key>NSLocationWhenInUseUsageDescription</key><string>Attending uses your approximate location for the weather and prayer times.</string>
+<key>NSLocationUsageDescription</key><string>Attending uses your approximate location for the weather.</string>
+<key>NSLocationWhenInUseUsageDescription</key><string>Attending uses your approximate location for the weather.</string>
 <key>NSAudioCaptureUsageDescription</key><string>Attending listens to system audio only to animate its visualizer while music plays. Nothing is recorded or saved.</string>
 <key>NSAppleEventsUsageDescription</key><string>Attending uses this for Spotify and Apple Music controls in the notch.</string>
 </dict></plist>

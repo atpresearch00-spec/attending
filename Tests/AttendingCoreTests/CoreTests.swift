@@ -15,13 +15,13 @@ func XCTFail(_ message: String, file: StaticString = #file, line: UInt = #line) 
         suite.testHistoryIsBounded()
         suite.testNotchAndExternalDisplayGeometry()
         try await suite.testPersistenceAndUnsupportedVersion()
-        suite.testPrayerTimesMatchReference()
-        suite.testQibla()
+        suite.testGitaDailyRotation()
+        suite.testGitaCatalog()
         suite.testCalendarFeeds()
         suite.testBoardsMath()
         suite.testIslandPositions()
         suite.testCodexRolloutsAndSessionNames()
-        print("PASS: 13 core checks (lifecycle, validation, bounds, geometry, island positions, persistence, prayer times, qibla, calendar feeds, boards, session names)")
+        print("PASS: 13 core checks (lifecycle, validation, bounds, geometry, island positions, persistence, daily reflections, verse references, calendar feeds, boards, session names)")
     }
     func testExecutableDiscovery() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -234,32 +234,40 @@ func XCTFail(_ message: String, file: StaticString = #file, line: UInt = #line) 
         XCTAssertEqual(BoardsMath.phase(for: logged, now: Date()), .finished)
         XCTAssertEqual(logged.resultText, "86%")
     }
-    func testQibla() {
-        // New York's qibla is about 58.5° (NE), London's about 119°.
-        let ny = PrayerTimes.qiblaBearing(latitude: 40.7128, longitude: -74.006)
-        XCTAssertTrue(abs(ny - 58.5) < 1)
-        XCTAssertEqual(PrayerTimes.compassPoint(ny), "NE")
-        XCTAssertTrue(abs(PrayerTimes.qiblaBearing(latitude: 51.5, longitude: -0.13) - 119) < 1)
-        XCTAssertEqual(PrayerTimes.compassPoint(350), "N")
-    }
-    func testPrayerTimesMatchReference() {
-        func check(_ date: String, _ lat: Double, _ lon: Double, _ zone: String, _ method: PrayerTimes.Method, _ asr: PrayerTimes.Asr, _ expected: [String]) {
-            let tz = TimeZone(identifier: zone)!
-            let parser = DateFormatter(); parser.timeZone = tz; parser.dateFormat = "yyyy-MM-dd HH:mm"
-            let noon = parser.date(from: "\(date) 12:00")!
-            let times = PrayerTimes.times(on: noon, latitude: lat, longitude: lon, timeZone: tz, method: method, asr: asr)
-            for (prayer, text) in zip([PrayerTimes.Prayer.fajr, .sunrise, .dhuhr, .asr, .maghrib, .isha], expected) {
-                let want = parser.date(from: "\(date) \(text)")!
-                let got = times[prayer]!
-                if abs(got.timeIntervalSince(want)) > 60 { XCTFail("\(prayer) on \(date) at \(lat),\(lon): got \(parser.string(from: got)), expected \(text)") }
-            }
+    func testGitaDailyRotation() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        func at(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 12, _ minute: Int = 0) -> Date {
+            calendar.date(from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute))!
         }
-        // Gulf coast of Florida (27.50° N, 82.57° W).
-        check("2026-09-29", 27.50, -82.57, "America/New_York", .isna, .standard, ["06:18", "07:22", "13:21", "16:45", "19:19", "20:22"])
-        check("2026-09-29", 27.50, -82.57, "America/New_York", .mwl, .standard, ["06:05", "07:22", "13:21", "16:45", "19:19", "20:32"])
-        check("2026-09-29", 27.50, -82.57, "America/New_York", .ummAlQura, .standard, ["06:02", "07:22", "13:21", "16:45", "19:19", "20:49"])
-        // London in winter, Hanafi Asr.
-        check("2027-01-15", 51.51, -0.13, "Europe/London", .mwl, .hanafi, ["05:59", "08:00", "12:10", "14:32", "16:21", "18:14"])
+        XCTAssertEqual(GitaQuotes.daily(on: at(2026, 1, 1), calendar: calendar).id, "2.47")
+        XCTAssertEqual(GitaQuotes.daily(on: at(2026, 1, 2), calendar: calendar).id, "2.48")
+        XCTAssertEqual(GitaQuotes.daily(on: at(2026, 1, 9), calendar: calendar).id, "2.47")
+        XCTAssertEqual(GitaQuotes.daily(on: at(2025, 12, 31), calendar: calendar).id, "17.15")
+        // A 23-hour or 25-hour day still has one reflection until local midnight.
+        for (month, day) in [(3, 8), (11, 1)] {
+            let morning = at(2026, month, day, 0, 1)
+            let evening = at(2026, month, day, 23, 59)
+            XCTAssertEqual(GitaQuotes.daily(on: morning, calendar: calendar), GitaQuotes.daily(on: evening, calendar: calendar))
+            let tomorrow = at(2026, month, day + 1, 0, 1)
+            XCTAssertEqual(GitaQuotes.index(on: tomorrow, calendar: calendar), (GitaQuotes.index(on: morning, calendar: calendar) + 1) % GitaQuotes.all.count)
+        }
+        // The same instant can belong to different civil dates in different zones.
+        var tokyo = calendar; tokyo.timeZone = TimeZone(identifier: "Asia/Tokyo")!
+        let instant = at(2026, 1, 1, 23)
+        XCTAssertEqual(GitaQuotes.daily(on: instant, calendar: calendar).id, "2.47")
+        XCTAssertEqual(GitaQuotes.daily(on: instant, calendar: tokyo).id, "2.48")
+    }
+    func testGitaCatalog() {
+        XCTAssertEqual(GitaQuotes.all.map(\.id), ["2.47", "2.48", "4.39", "6.5", "6.17", "6.26", "12.13-14", "17.15"])
+        XCTAssertEqual(Set(GitaQuotes.all.map(\.id)).count, GitaQuotes.all.count)
+        for quote in GitaQuotes.all {
+            XCTAssertTrue(!quote.text.isEmpty)
+            XCTAssertEqual(quote.sourceURL.scheme, "https")
+            XCTAssertEqual(quote.sourceURL.host, "www.holy-bhagavad-gita.org")
+            XCTAssertEqual(quote.sourceURL.absoluteString, "https://www.holy-bhagavad-gita.org/chapter/\(quote.chapter)/verse/\(quote.verse)/")
+            XCTAssertTrue(quote.copyText.contains(quote.reference) && quote.copyText.contains("(paraphrase)"))
+        }
     }
     func testCodexRolloutsAndSessionNames() {
         var reader = CodexRolloutReader()

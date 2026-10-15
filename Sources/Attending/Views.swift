@@ -80,8 +80,8 @@ struct PreviewView: View {
                     Label("\(model.attentionCount)", systemImage: "hand.raised.fill")
                         .font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.attention).lineLimit(1).fixedSize()
                         .help("\(model.attentionCount) needs you")
-                } else if model.salahEnabled {
-                    NextPrayerChip(salah: model.salah)
+                } else if model.gitaEnabled {
+                    GitaChip(gita: model.gita) { model.open(.home) }
                 }
                 IconButton(symbol: "chevron.down", help: "Open Attending", size: 22) { model.setMode(.expanded) }
             }

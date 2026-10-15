@@ -1,0 +1,29 @@
+name: macOS build and checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build app and helpers
+        run: swift build --disable-sandbox
+      - name: Core checks
+        run: swift run --disable-sandbox AttendingCoreChecks
+      - name: Bridge and settings checks
+        run: python3 scripts/test-bridge.py
+      - name: Approval checks
+        run: python3 scripts/test-approvals.py
+      - name: Fake Codex transport checks
+        shell: bash
+        run: |
+          swiftc -parse-as-library Sources/AttendingCore/Models.swift Sources/AttendingCore/CodexTransport.swift scripts/fixtures/CodexTransportHarness.swift -o "$RUNNER_TEMP/codex-transport-checks"
+          "$RUNNER_TEMP/codex-transport-checks" "$GITHUB_WORKSPACE/scripts/fixtures/fake-codex-app-server.py"

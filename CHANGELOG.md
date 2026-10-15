@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — personal fork
+
+- Replace the prayer tracker, prayer alerts and related settings with offline daily Bhagavad Gita reflections.
+- Show chapter-and-verse references, clearly labeled English paraphrases, Next/Today controls, copy and source links.
+- Rotate at local midnight and refresh after wake or clock/time-zone changes; location is now used only for optional weather.
+
+
 ## 1.1.0
 
 - **Boards countdown:** COMLEX, USMLE, shelf and block exams with presets, a dedicated period, days off and study days; a question-bank pace with quick logging; practice exams with a score trend; milestone, checklist, exam-morning and "you did it" moments; a calm mode; a countdown in the closed notch; and a shareable countdown card.

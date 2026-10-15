@@ -302,11 +302,6 @@ extension AppDelegate {
             // something plays, wait for its artwork so the player isn't captured blank.
             if CommandLine.arguments.contains("--no-media") { model.media.hiddenForCapture = true }
             for _ in 0..<32 where model.media.track != nil && model.media.artwork == nil { try? await Task.sleep(for: .milliseconds(250)) }
-            // --salah-demo: Fajr and Dhuhr prayed, twenty minutes into Asr, so the card reads in order.
-            if CommandLine.arguments.contains("--salah-demo") {
-                for _ in 0..<20 where model.salah.times[.asr] == nil { try? await Task.sleep(for: .milliseconds(250)) }
-                if let asr = model.salah.times[.asr] { model.salah.showDemo(prayed: [.fajr, .dhuhr], at: asr.addingTimeInterval(20 * 60)) }
-            }
             // --boards-demo: a sample COMLEX countdown with a question bank and practice scores.
             if CommandLine.arguments.contains("--boards-demo") {
                 let day = Calendar.current.startOfDay(for: Date())
@@ -422,14 +417,11 @@ extension AppDelegate {
             model.state.sessions.removeAll { $0.id == demoID }
             model.setMode(.idle)
             try? await Task.sleep(for: .seconds(1.2))
-            // A prayer-time alert, as it drops from the notch.
-            if let asr = model.salah.times[.asr] {
-                model.raise(NotchAlert(title: "Time for Asr", subtitle: asr.formatted(date: .omitted, time: .shortened), symbol: "moon.stars.fill", color: Theme.done, target: .home, actionTitle: "Prayed", action: {}))
-                try? await Task.sleep(for: .seconds(1.2))
-                snapshot(to: directory.appendingPathComponent("salah-alert.png"))
-                model.alert = nil; model.setMode(.idle)
-                try? await Task.sleep(for: .seconds(1))
-            }
+            // The offline daily reflection in its Home card.
+            model.open(.home)
+            try? await Task.sleep(for: .seconds(1.2))
+            snapshot(to: directory.appendingPathComponent("gita-home.png"))
+            model.setMode(.idle)
             // A frame mid-spring, to check the transition path.
             model.selectedTab = .home; model.setMode(.expanded)
             try? await Task.sleep(for: .milliseconds(140))
@@ -440,7 +432,7 @@ extension AppDelegate {
     }
     /// The 1.1 update video: each new alert as the notch drops it, the Study cards and a
     /// Shelf of sample files. Sample data only, nothing saved; the Shelf and the island's
-    /// position are put back afterwards. Run with --boards-demo --salah-demo --no-media.
+    /// position are put back afterwards. Run with --boards-demo --no-media.
     private func captureVideoAssets(_ directory: URL) async {
         func wait(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds)) }
         func shoot(_ name: String) { snapshot(to: directory.appendingPathComponent("\(name).png")) }
@@ -466,6 +458,7 @@ extension AppDelegate {
         render("card-anki-full", width: 460, AnkiCard(anki: model.anki))
         render("card-week", WeekCard(model: model, activity: model.activity))
         render("card-lookup", LookupBar())
+        render("card-gita", width: 272, GitaCard(gita: model.gita))
         // Each new alert, as it drops from the notch.
         let alerts: [(String, NotchAlert, Bool)] = [
             ("alert-bedtime", NotchAlert(title: "COMLEX Level 1 tomorrow", subtitle: "Wind down by 10:30 PM. Sleep is part of the plan.", symbol: "moon.zzz.fill", color: Theme.working, target: .study), false),
@@ -476,7 +469,6 @@ extension AppDelegate {
             ("alert-copied", NotchAlert(title: "Copied 18 words", subtitle: "Nephrotic syndrome: proteinuria > 3.5 g/day, hypoalbuminemia, edema, hyperlipidemia", symbol: "text.viewfinder", color: Theme.done, target: .shelf), false),
             ("alert-merged", NotchAlert(title: "Merged 3 PDFs", subtitle: "Renal block.pdf · 64 pages · on your Shelf", symbol: "doc.on.doc.fill", color: Theme.done, target: .shelf), false),
             ("alert-zotero", NotchAlert(title: "Added to Zotero", subtitle: "Zotero is looking up the paper's details", symbol: "books.vertical.fill", color: Theme.done, target: .shelf), false),
-            ("alert-jummah", NotchAlert(title: "Jummah at 1:30 PM", subtitle: "Jummah Mubarak. Time to head to the masjid.", symbol: "building.columns.fill", color: Theme.done, target: .home), false),
             ("alert-class", NotchAlert(title: "Cardio lecture in 10 min", subtitle: "9:00 AM · Room 1", symbol: "calendar", color: Theme.working, target: .home), false),
         ]
         // Alerts drop from the closed island.

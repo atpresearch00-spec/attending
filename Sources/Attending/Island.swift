@@ -304,7 +304,7 @@ struct HomeView: View {
                     TimerCard(timer: timer)
                 }
                 VStack(spacing: 10) {
-                    if model.salahEnabled { SalahCard(salah: model.salah) }
+                    if model.gitaEnabled { GitaCard(gita: model.gita) }
                     AnkiMiniCard(anki: model.anki)
                 }.frame(width: 272)
             }
@@ -324,7 +324,7 @@ struct HomeView: View {
                 }
                 VStack(spacing: 10) {
                     TodayCard(model: model, calendar: calendar, weather: model.weather)
-                    if model.salahEnabled { SalahCard(salah: model.salah) }
+                    if model.gitaEnabled { GitaCard(gita: model.gita) }
                     AnkiMiniCard(anki: model.anki)
                 }.frame(width: 272)
             }
@@ -883,29 +883,9 @@ struct SettingsView: View {
                     .onChange(of: instantScreenshots) { _, instant in ScreenshotWatcher.thumbnailEnabled = !instant }
                 note("macOS holds each screenshot file while its corner thumbnail is showing (about 5 seconds), which delays the drop. Attending's drop does the same job.")
             }
-            group("Salah") {
-                Toggle("Prayer times and tracker", isOn: Binding(get: { model.salahEnabled }, set: { model.setSalah($0) }))
-                Picker("Calculation", selection: Binding(get: { model.salah.method }, set: { model.salah.method = $0 })) {
-                    ForEach(PrayerTimes.Method.allCases, id: \.self) { Text($0.title).tag($0) }
-                }.frame(maxWidth: 380)
-                Picker("Asr", selection: Binding(get: { model.salah.asr }, set: { model.salah.asr = $0 })) {
-                    ForEach(PrayerTimes.Asr.allCases, id: \.self) { Text($0.title).tag($0) }
-                }.frame(maxWidth: 380)
-                Toggle("Notch alert at each prayer time and 15 minutes before it ends", isOn: $model.salahAlerts)
-                Toggle("Jummah reminder on Fridays", isOn: Binding(get: { model.salah.jummahReminder }, set: { model.salah.jummahReminder = $0 }))
-                if model.salah.jummahReminder {
-                    HStack {
-                        DatePicker("Khutbah at", selection: Binding(
-                            get: { Calendar.current.startOfDay(for: Date()).addingTimeInterval(TimeInterval(model.salah.jummahMinutes * 60)) },
-                            set: { let c = Calendar.current.dateComponents([.hour, .minute], from: $0); model.salah.jummahMinutes = (c.hour ?? 13) * 60 + (c.minute ?? 30) }),
-                                   displayedComponents: .hourAndMinute).fixedSize()
-                        Picker("Remind me", selection: Binding(get: { model.salah.jummahLead }, set: { model.salah.jummahLead = $0 })) {
-                            ForEach([15, 30, 45, 60], id: \.self) { Text("\($0) min before").tag($0) }
-                        }.fixedSize()
-                    }
-                }
-                Toggle("Surah Al-Kahf reminder Friday morning", isOn: Binding(get: { model.salah.kahfReminder }, set: { model.salah.kahfReminder = $0 }))
-                note("Times are calculated on this Mac for your location\(model.salah.place.map { " (\($0))" } ?? ""). ISNA is common in North America; match your local masjid's timetable. Set the khutbah time to your masjid's.")
+            group("Bhagavad Gita") {
+                Toggle("Daily Bhagavad Gita reflections", isOn: Binding(get: { model.gitaEnabled }, set: { model.setGita($0) }))
+                note("A new reflection each day, available offline on Home and in Exam week. Browse with Next, return to Today, copy a reflection, or open its verse for the full context. English paraphrases are labeled with chapter and verse.")
             }
             group("Hover preview") {
                 Toggle("Glance: next event, exam, Anki, Claude usage and next reading", isOn: $model.previewGlance)
@@ -1076,7 +1056,7 @@ struct BoardsSettings: View {
                 Stepper("Red at \(exams.redDays) days", value: $exams.redDays, in: 1...60, step: 1)
             }
             Toggle("Exam week mode", isOn: $model.examWeek)
-            Text("Home shows only the countdown, readings, timer, Anki and Salah, and your Focus shortcut (Automation) runs and stays on.")
+            Text("Home shows only the countdown, readings, timer, Anki and Bhagavad Gita reflections, and your Focus shortcut (Automation) runs and stays on.")
                 .font(.system(size: 11)).foregroundStyle(Theme.tertiary).fixedSize(horizontal: false, vertical: true)
             Toggle("Show the countdown in the closed notch", isOn: $exams.pinToNotch)
             Toggle("Milestone alerts (100, 60, 30, 14, 7, 3 and 1 days)", isOn: $exams.milestoneAlerts)
