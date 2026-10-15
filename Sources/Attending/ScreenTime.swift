@@ -37,7 +37,12 @@ import ApplicationServices
         self.timer = timer
         // Catch a distraction the moment it comes to the front, not up to 30 s later.
         activation = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { Task { try? await Task.sleep(for: .milliseconds(800)); self?.checkFocus() } }
+            MainActor.assumeIsolated {
+                _ = Task<Void, Never> {
+                    try? await Task.sleep(for: .milliseconds(800))
+                    self?.checkFocus()
+                }
+            }
         }
     }
     func stop() {
